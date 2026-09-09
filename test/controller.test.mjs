@@ -210,3 +210,36 @@ test('recording failure revokes recording flag and local capture signal', async 
   assert.equal(options.signal.aborted, true);
   assert.equal(s.controller.getStatus().recording, false);
 });
+
+test('read requests restore only the approved target and verify foreground again',async t=>{
+  for(const name of ['screenshot','snapshot','list_windows']){
+    const s=setup(t);s.arm();s.changeWindow({handle:'other',processId:777});let focusCalls=0;
+    s.executor.focus=async(window,{signal})=>{focusCalls++;assert.equal(window.handle,'1001');assert.equal(signal.aborted,false);s.changeWindow(target());return {ok:true};};
+    assert.equal((await s.controller.runCommand(s.command(name))).ok,true);assert.equal(focusCalls,1);
+  }
+});
+test('read focus refusal and false success never produce a screenshot',async t=>{
+  for(const response of [{ok:false,error:'focus-refused'},{ok:true}]){
+    const s=setup(t);s.arm();s.changeWindow({handle:'other'});s.executor.focus=async()=>response;
+    const r=await s.controller.runCommand(s.command('screenshot'));assert.equal(r.ok,false);assert.equal(s.calls.length,0);
+    assert.equal(r.error,response.ok?'target-changed':'focus-refused');
+  }
+});
+test('STOP aborts focus recovery and a late success cannot capture or rearm',async t=>{
+  const s=setup(t);s.arm();s.changeWindow({handle:'other'});const pending=deferred();let signal;
+  s.executor.focus=async(_window,options)=>{signal=options.signal;return pending.promise;};
+  const request=s.controller.runCommand(s.command('screenshot'));await new Promise(resolve=>setImmediate(resolve));
+  s.controller.emergencyStop();assert.equal(signal.aborted,true);pending.resolve({ok:true});
+  assert.equal((await request).error,'command-cancelled');assert.equal(s.calls.length,0);assert.equal(s.controller.mode,'off');
+});
+test('input and disabled sessions cannot trigger focus recovery',async t=>{
+  const s=setup(t);s.arm();const snapshotId=await s.capture();s.changeWindow({handle:'other'});let focusCalls=0;
+  s.executor.focus=async()=>{focusCalls++;return {ok:true};};
+  for(const name of ['click','type','key','scroll'])assert.equal((await s.controller.runCommand(s.command(name,{snapshotId,x:0,y:0,text:'test',key:'ENTER',deltaY:120}))).ok,false);
+  s.controller.setMode('off',{generation:1});assert.equal((await s.controller.runCommand(s.command('screenshot'))).ok,false);assert.equal(focusCalls,0);
+});
+test('focus recovery invalidates previous snapshots',async t=>{
+  const s=setup(t);s.arm();const old=await s.capture();s.changeWindow({handle:'other'});
+  s.executor.focus=async()=>{s.changeWindow(target());return {ok:true};};await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('type',{snapshotId:old,text:'test'}))).error,'fresh-snapshot-required');
+});

@@ -84,7 +84,23 @@ export class HostController extends EventEmitter {
     timer.unref?.();
     try {
       this.getStatus();
-      const foreground=await this.executor.foreground({signal:operation.signal});
+      let foreground=await this.executor.foreground({signal:operation.signal});
+      if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
+      const canRestore=READ.has(name)||name==='list_windows';
+      const target=this.targetWindow;
+      if(canRestore && this.executor.focus && target &&
+        (String(foreground.handle)!==String(target.handle)||foreground.processId!==target.processId)) {
+        // Check the session and approved target before any focus change. The native
+        // executor verifies current desktop, privileges and sensitive controls too.
+        const preflight=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),
+          foreground:target,targetWindow:target,allowedApps:this.configStore.load().allowedApps});
+        if(!preflight.allowed)return fail(preflight.category,preflight.reason);
+        this.snapshots.clear();
+        const focused=await this.executor.focus(target,{signal:operation.signal});
+        if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
+        if(!focused.ok)return fail(focused.error||'focus-refused');
+        foreground=await this.executor.foreground({signal:operation.signal});
+      }
       if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
       const verdict=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),foreground,
         targetWindow:this.targetWindow,allowedApps:this.configStore.load().allowedApps});

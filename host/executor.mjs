@@ -2,7 +2,7 @@ import * as native from './windows.mjs';
 export class DesktopExecutor{
   constructor({recorder}){this.recorder=recorder;}
   foreground(options){return native.foregroundWindow(options);}
-  focus(targetWindow){return native.focus({expectedWindow:targetWindow});}
+  focus(targetWindow,options){return native.focus({expectedWindow:targetWindow},options);}
   async run(name,args,options){
     switch(name){
       case 'screenshot':return native.capture({expectedWindow:args.expectedWindow},options);
