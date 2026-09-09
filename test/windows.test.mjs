@@ -53,3 +53,12 @@ test('native C# compiles on Windows without observing or controlling any apps', 
   const output=execFileSync(executable,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'scripts/windows-helper.ps1'),'-CompileOnly'],{encoding:'utf8',timeout:25000,windowsHide:true});
   assert.deepEqual(JSON.parse(output),{ok:true,compiled:true});
 });
+
+test('native guard errors are precise but foreign exception content stays private', {skip:process.platform!=='win32',timeout:30000}, () => {
+  const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+  const script = `. '${path.join(root,'scripts/windows-helper.ps1').replaceAll("'","''")}' -CompileOnly; $method=[BotDeskNative].GetMethod('Block',[Reflection.BindingFlags]'NonPublic,Static'); $guard=$method.Invoke($null,@('focus-refused')); $wrapped=New-Object Exception('private outer', $guard); $foreign=New-Object Exception('private window title'); @{guard=[BotDeskNative]::SafeError($wrapped);foreign=[BotDeskNative]::SafeError($foreign)} | ConvertTo-Json -Compress`;
+  const executable=path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+  const output=execFileSync(executable,['-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,timeout:25000});
+  assert.deepEqual(JSON.parse(output.trim().split(/\r?\n/).at(-1)),{guard:'focus-refused',foreign:'native-action-blocked'});
+  assert.equal(output.includes('private'),false);
+});

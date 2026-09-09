@@ -57,7 +57,17 @@ public static class BotDeskNative {
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
     {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"Z",0x5A},{"LEFT",0x25},{"RIGHT",0x27}
   };
-  static Exception Block(string reason) { return new InvalidOperationException(reason); }
+  sealed class GuardFailure : Exception {
+    public GuardFailure(string reason) : base(reason) { }
+  }
+  static Exception Block(string reason) { return new GuardFailure(reason); }
+  public static string SafeError(Exception error) {
+    // Only our own fixed guard codes may cross the process boundary.
+    // Native/UI Automation exception messages may contain private window content.
+    for(int depth=0; error!=null && depth<12; depth++,error=error.InnerException)
+      if(error is GuardFailure) return error.Message;
+    return "native-action-blocked";
+  }
   public static void Init() { SetProcessDPIAware(); }
   static string DesktopName(IntPtr handle) {
     if(handle==IntPtr.Zero) return "unknown";
@@ -288,5 +298,7 @@ try {
   $result | ConvertTo-Json -Compress -Depth 12
 } catch {
   # Error details from UI Automation can include sensitive content. Keep the transport error generic.
-  @{ ok = $false; error = 'native-action-blocked' } | ConvertTo-Json -Compress
+  $safeError = 'native-action-blocked'
+  if ('BotDeskNative' -as [type]) { $safeError = [BotDeskNative]::SafeError($_.Exception) }
+  @{ ok = $false; error = $safeError } | ConvertTo-Json -Compress
 }
