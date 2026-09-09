@@ -73,15 +73,16 @@ The provisioning secret is separate from all three. Keep the complete pairing fi
 
 ## Prepare the PC once before leaving
 
-1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect.
-2. Open the app the bot should use. In BotDesk, choose **REFRESH WINDOWS** and select that app under **APPROVED WINDOW**. The default allowed apps are Edge, Chrome, Firefox, and Notepad.
-3. Enable **Allow remote arming while BotDesk is running** and save. Local **GO LIVE — 8 HOURS** also enables remote arming. The host checks the selected window when access starts and attempts to bring it forward.
-4. Use **COPY PHONE LINK** and save the private link for yourself. It contains the owner credential after `#`.
-5. Leave Windows signed in, awake, and unlocked, with BotDesk running and the selected app open. You can leave access OFF and start it later from the phone.
+The host has three setup tabs. Connection and readiness messages show the saved state; reading pairing details or changing a checkbox does not save it.
+
+1. **Pair PC:** paste the private host pairing JSON into **Host pairing details**, choose **Read pairing details**, then **Save & connect**. Reading fills the connection fields and clears the paste box; saving encrypts the settings on this PC. Check the PC connection status. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect. Individual fields are available under **Advanced connection settings**.
+2. **Choose window:** open the app the bot should use. Choose **Refresh** beside **Available app windows**, then select that app. The default allowed apps are Edge, Chrome, Firefox, and Notepad. Selecting a window leaves access OFF.
+3. **Phone access:** enable **Allow access from my phone**, choose **Save phone settings**, then **Copy private phone link**. Save that link for yourself: it contains the owner credential after `#`. Checkbox changes do not apply until saved. Local **Go live — 8 hours** also enables remote arming and attempts to bring the selected window forward.
+4. Leave Windows signed in, awake, and unlocked, with BotDesk running and the selected app open. You can leave access OFF and start it later from the phone.
 
 There are no per-action permission prompts during authorized remote operation. The host checks permissions and the selected window automatically. Blocked windows and unsafe actions return an error to the bot.
 
-**Start BotDesk when I sign in** is optional and requires your explicit choice in the app. It does not unlock Windows or select a target window. The selected target is held in memory: restarting BotDesk or Windows requires selecting the target again. Ordinary network interruptions and relay restarts can resume the same prepared host inside its saved owner window.
+**Start BotDesk when I sign in** is optional: choose it in **Phone access** and save only if wanted. It does not unlock Windows or select a target window. The selected target is held in memory: restarting BotDesk or Windows requires selecting the target again. Ordinary network interruptions and relay restarts can resume the same prepared host inside its saved owner window.
 
 BotDesk cannot wake a powered-off PC, bypass the lock screen, approve UAC, or reopen a closed target app.
 
@@ -107,18 +108,46 @@ MCP is the tool connection that lets an AI agent request screenshots and actions
 
 The adapter gives each process a distinct bot ID by default. `BOTDESK_BOT_ID` can set an explicit ID if needed. One bot holds the control lease at a time. The bot must take a fresh snapshot before input; click coordinates are relative to the selected-window capture. Commands are rejected rather than queued when the host is busy.
 
+### Grok Build
+
+Use a compatible runner that can launch a local MCP process. Grok Build documents this connection through `~/.grok/config.toml`, including environment-variable expansion. This config belongs on the **bot runner's computer**; its adapter path must refer to a BotDesk source checkout on that computer with Node.js and dependencies installed. The Windows host stays on the PC being controlled. See [xAI's Grok Build MCP documentation](https://docs.x.ai/build/features/mcp-servers).
+
+Set `BOTDESK_ADAPTER_PATH`, `BOTDESK_RELAY_URL`, `BOTDESK_HOST_ID`, and `BOTDESK_BOT_TOKEN` through the runner's private environment configuration before starting Grok Build. The adapter path is the full local path to `mcp/server.mjs`. Supply only the bot credential; keep the host token, owner token, owner link, and complete pairing file out of the runner.
+
+Add this user-level configuration:
+
+```toml
+[mcp_servers.botdesk]
+command = "node"
+args = ["${BOTDESK_ADAPTER_PATH}"]
+env = { BOTDESK_RELAY_URL = "${BOTDESK_RELAY_URL}", BOTDESK_HOST_ID = "${BOTDESK_HOST_ID}", BOTDESK_BOT_TOKEN = "${BOTDESK_BOT_TOKEN}" }
+startup_timeout_sec = 30
+tool_timeout_sec = 40
+```
+
+Then check the runner:
+
+```sh
+grok mcp list
+grok mcp doctor botdesk
+```
+
+In Grok Build, `/mcps` opens server controls; refresh after editing the configuration. Ask the bot to call `botdesk_status` first. After the owner starts access, request a fresh screenshot before an input action. BotDesk's relay URL is an application API, so connect through the included local adapter rather than registering that URL as a remote MCP server.
+
+These instructions follow xAI's documented configuration format; a real Grok Build-to-PC session still needs verification. BotDesk does not sign into Grok or automatically connect the standard Grok chat.
+
 ## Use the phone while away
 
 - **GO LIVE — 8 HOURS** starts an immediate owner-authorized timer. The API accepts durations up to 12 hours. If the PC is temporarily offline, the timer is saved and access can start when that prepared host reconnects before the timer ends.
 - **Set a time window** saves one dated window. For example, select tomorrow at **6:00 AM** for START and tomorrow at **6:00 PM** for END, then choose **SAVE SCHEDULE**. Inputs use the phone's local timezone, displayed beside the fields. This is a one-time window, not a daily recurring schedule.
 - The page shows the saved dates, current PC connection, and a countdown until start or stop. Scheduled access starts automatically when the PC is ready and stops at the saved end time. No one needs to confirm at the PC.
 - **PAUSE** and **STOP NOW** cancel the saved window. Access stays disabled until you choose GO LIVE or save a new window. A phone STOP can be followed by another phone GO LIVE.
-- The local **STOP NOW** button and **Ctrl + Shift + F12** are emergency stops. They cancel access and latch the local stop. Use **UNLOCK LOCAL STOP** on the PC before remote access can start again.
+- The local **STOP NOW** button and **Ctrl + Shift + F12** are emergency stops. They cancel access and latch the local stop. Use **Unlock local stop** on the PC before remote access can start again.
 
 A reconnect never extends the authorized end time. A saved owner window permits another automatic host acknowledgement only while that window is still active. Without a saved window, reconnecting leaves access OFF.
 
 ## Captures and recordings
 
-Use **SHOW SCREEN** for an on-demand phone preview of the guarded selected window. The bot can also request a snapshot or screenshot while live.
+Use **TAKE SNAPSHOT** for an on-demand phone preview of the guarded selected window. The bot can also request a snapshot or screenshot while live.
 
-Bot recordings are local WebM files built from guarded selected-window captures, at up to one frame per second, without audio. They are not smooth full-desktop video. Use **OPEN RECORDINGS** in the host to open its application-data `captures` folder. Recordings are not uploaded to the relay automatically. Audit records are stored in the host's application-data `logs` folder.
+Bot recordings are local WebM files built from guarded selected-window captures, at up to one frame per second, without audio. They are not smooth full-desktop video. Use **Open recordings** in the host to open its application-data `captures` folder. Recordings are not uploaded to the relay automatically. Audit records are stored in the host's application-data `logs` folder.

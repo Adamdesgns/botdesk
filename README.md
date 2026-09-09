@@ -6,6 +6,16 @@ Let approved bots operate one selected app window on your Windows PC while you a
 
 **Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
 
+## Prepare this PC
+
+After [setting up and provisioning your private relay](docs/SETUP.md), use the host's three tabs:
+
+1. **Pair PC:** paste the host pairing JSON, choose **Read pairing details**, then **Save & connect**.
+2. **Choose window:** open the target app, choose **Refresh**, and select its window.
+3. **Phone access:** enable **Allow access from my phone**, choose **Save phone settings**, then **Copy private phone link** for yourself.
+
+Keep Windows awake and unlocked. Use **Go live — 8 hours** or the phone schedule when ready. Connect a compatible bot runner separately using the [MCP setup instructions](docs/SETUP.md#connect-the-approved-bot); give it only the bot credential.
+
 ## Owner controls
 
 - GO LIVE defaults to eight hours, with a maximum of twelve hours.
@@ -29,6 +39,7 @@ Input needs a fresh screenshot or snapshot. The host checks the target, process,
 npm ci
 npm run check
 node scripts/desktop-smoke.mjs
+node scripts/onboarding-smoke.mjs
 node scripts/recording-smoke.mjs
 npm run build:win
 node scripts/desktop-smoke.mjs --packaged
@@ -40,6 +51,8 @@ Closing BotDesk's window hides it to the tray; Quit BotDesk ends the host. Autom
 
 ## Preview
 
-![Windows control host](docs/images/desktop-packaged.png)
+Synthetic setup and phone previews; these images do not show a live pairing.
 
-[Phone schedule preview](docs/images/phone-schedule.png)
+![BotDesk Free first-run setup in a synthetic fixture](docs/images/desktop-setup.png)
+
+[Synthetic phone schedule preview](docs/images/phone-schedule.png)
