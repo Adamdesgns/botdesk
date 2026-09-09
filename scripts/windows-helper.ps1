@@ -175,7 +175,20 @@ public static class BotDeskNative {
   }
   public static void Focus(string handle,uint pid) {
     IntPtr hwnd=Check(handle,pid,false);
-    if(!SetForegroundWindow(hwnd)) throw Block("focus-refused");
+    // A background host may be refused by SetForegroundWindow. Ask the selected
+    // app's accessibility provider to focus it, then verify the actual foreground.
+    // Never attach input queues, synthesize Alt, or relax any target safety check.
+    if(GetForegroundWindow()!=hwnd && !SetForegroundWindow(hwnd)) {
+      Check(handle,pid,false);
+      try { AutomationElement.FromHandle(hwnd).SetFocus(); }
+      catch { throw Block("focus-refused"); }
+    }
+    var wait=Stopwatch.StartNew();
+    while(GetForegroundWindow()!=hwnd && wait.ElapsedMilliseconds<1000) {
+      BasicCheck(hwnd,pid,false);
+      System.Threading.Thread.Sleep(25);
+    }
+    if(GetForegroundWindow()!=hwnd) throw Block("focus-refused");
     Check(handle,pid,true);
   }
   public static Dictionary<string,object> Capture(string handle,uint pid) {
