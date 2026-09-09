@@ -1,0 +1,56 @@
+{
+  "name": "botdesk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A Windows control host that lets an approved AI agent operate one PC while its owner is away.",
+  "main": "host/main.mjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.mjs",
+    "check": "npm run test && npm run relay:types && npm run mcp:smoke",
+    "relay:types": "wrangler types --config relay/wrangler.jsonc && tsc -p relay/tsconfig.json --noEmit",
+    "relay:dev": "wrangler dev --config relay/wrangler.jsonc",
+    "relay:deploy": "wrangler deploy --config relay/wrangler.jsonc",
+    "mcp:smoke": "node scripts/mcp-smoke.mjs",
+    "build:win": "node scripts/build-icon.mjs && electron-builder --win portable",
+    "build:dir": "electron-builder --dir --win"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260908.1",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
+    "miniflare": "^5.20260908.0-alpha",
+    "playwright-core": "^1.58.0",
+    "typescript": "^5.9.2",
+    "wrangler": "4.130.0"
+  },
+  "build": {
+    "asarUnpack": [
+      "scripts/windows-helper.ps1"
+    ],
+    "appId": "com.adamdesigns.botdesk",
+    "productName": "BotDesk",
+    "artifactName": "BotDesk-${version}-portable.${ext}",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "host/**/*",
+      "shared/**/*",
+      "scripts/windows-helper.ps1",
+      "package.json"
+    ],
+    "win": {
+      "icon": "host/ui/assets/icon.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}

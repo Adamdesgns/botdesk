@@ -1,0 +1,21 @@
+import {app,BrowserWindow,ipcMain} from 'electron';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {RecordingService} from '../host/recording.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+app.setPath('userData',process.env.BOTDESK_TEST_DATA);
+app.whenReady().then(async()=>{
+const window=new BrowserWindow({width:800,height:650,webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,preload:path.join(root,'host/preload.cjs')}});
+const send=(name,payload)=>window.webContents.send('botdesk:'+name,payload);
+const service=new RecordingService({directory:path.join(app.getPath('userData'),'captures'),send});
+ipcMain.handle('botdesk:get-state',()=>({status:{mode:'off',relay:{}},config:{allowedApps:[]}}));
+ipcMain.handle('botdesk:record-chunk',(_event,chunk)=>service.chunk(chunk));
+ipcMain.handle('botdesk:record-done',(_event,id)=>service.finish(id));
+await window.loadFile(path.join(root,'host/ui/index.html'));
+const image={mimeType:'image/png',data:(await fs.readFile(path.join(root,'host/ui/assets/icon.png'))).toString('base64'),width:256,height:256};
+await service.start({signal:new AbortController().signal,onFailure:()=>service.stop(),getFrame:async()=>({ok:true,image})});
+await new Promise(resolve=>setTimeout(resolve,3500));
+const result=await service.stop();
+await fs.writeFile(path.join(app.getPath('userData'),'recording-result.json'),JSON.stringify(result));
+}).catch(error=>{console.error(error);app.exit(1);});

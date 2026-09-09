@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "botdesk-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "secrets": { "required": ["PROVISIONING_SECRET"] },
+  "durable_objects": {
+    "bindings": [
+      { "name": "SESSIONS", "class_name": "BotDeskSession" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["BotDeskSession"] }
+  ]
+}

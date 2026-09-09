@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BotDesk</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">ADAM DESIGNS / WINDOWS HOST</p>
+        <h1>BOTDESK</h1>
+        <p class="lede">Approved bots can see and operate this PC only while you arm a timed session.</p>
+      </div>
+      <div id="modeBadge" class="mode off">OFF</div>
+    </header>
+
+    <section class="control-card">
+      <div>
+        <p class="label">LOCAL CONTROL</p>
+        <h2 id="statusTitle">Bot access is off</h2>
+        <p id="statusDetail">The relay may stay online, but bot commands are rejected here.</p>
+      </div>
+      <div class="button-row">
+        <button id="armButton" class="primary">GO LIVE — 8 HOURS</button>
+        <button id="pauseButton">PAUSE</button>
+        <button id="stopButton" class="danger">STOP NOW</button>
+        <button id="unlockButton" hidden>UNLOCK LOCAL STOP</button>
+      </div>
+      <p class="hotkey">Emergency stop: <strong>Ctrl + Shift + F12</strong></p>
+    </section>
+
+    <section>
+      <div class="section-heading"><div><p class="label">APPROVED WINDOW</p><h2>Choose what the bot can use</h2></div><button id="refreshWindows">REFRESH WINDOWS</button></div>
+      <label>Available app windows<select id="targetWindow"><option value="">Refresh to choose a window</option></select></label>
+      <p id="targetDetail" class="quiet">Only the selected window is captured and controlled. Bring it to the foreground before sending the bot in.</p>
+    </section>
+    <section class="grid">
+      <article>
+        <p class="label">CONNECTION</p>
+        <dl>
+          <div><dt>Relay</dt><dd id="relayState">Not configured</dd></div>
+          <div><dt>Host ID</dt><dd id="hostState">Not configured</dd></div>
+          <div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div>
+        </dl>
+      </article>
+      <article>
+        <p class="label">REMOTE OWNER CONTROL</p>
+        <label class="check"><input id="remoteArm" type="checkbox"> Allow remote arming while BotDesk is running</label>
+        <label class="check"><input id="startAtLogin" type="checkbox"> Start BotDesk when I sign in</label>
+        <p class="quiet">Leave this PC awake and unlocked. The phone can arm access after you select a window here. A local emergency stop requires unlocking here.</p>
+        <button id="copyOwnerLink">COPY PHONE LINK</button>
+      </article>
+    </section>
+
+    <section>
+      <label>Paste the host pairing JSON<textarea id="pairingJson" rows="3" placeholder="Paste the config object from the private provisioning file"></textarea></label>
+      <button id="importPairing">FILL PAIRING SETTINGS</button>
+      <div class="section-heading">
+        <div><p class="label">SETUP</p><h2>Relay and private tokens</h2></div>
+        <button id="saveButton">SAVE SETTINGS</button>
+      </div>
+      <div class="form-grid">
+        <label>Relay URL<input id="relayUrl" type="url" placeholder="https://botdesk-relay.example.workers.dev"></label>
+        <label>Host ID<input id="hostId" autocomplete="off"></label>
+        <label>Host token<input id="hostToken" type="password" autocomplete="new-password"></label>
+        <label>Owner token<input id="ownerToken" type="password" autocomplete="new-password"></label>
+        <label>Bot token<input id="botToken" type="password" autocomplete="new-password"></label>
+        <label>Allowed apps<input id="allowedApps" placeholder="msedge, chrome, firefox, notepad"></label>
+      </div>
+      <p id="saveResult" class="result" aria-live="polite"></p>
+      <button id="openCaptures">OPEN RECORDINGS</button><p class="quiet">Recordings contain guarded window captures at up to one frame per second. Audio is not recorded.</p>
+    </section>
+  </main>
+  <script src="renderer.js"></script>
+</body>
+</html>

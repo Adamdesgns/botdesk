@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.env
+.dev.vars
+worker-configuration.d.ts
+captures/
+*.log
+.wrangler/
+electron-runtime.zip
+*.partial
+pairing*.json
+*-pairing.json
+private/
+
+# Local captures and machine-specific verification outputs are never public.
+/evidence/
+*.bundle
+
+.env.*
+.dev.vars.*
+*.private.json
+!*.example
