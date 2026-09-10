@@ -8,7 +8,7 @@ import {DesktopExecutor} from './executor.mjs';
 import {RelayClient} from './relay-client.mjs';
 import {RecordingService} from './recording.mjs';
 import {listWindows,focus} from './windows.mjs';
-import {classifyWindow,DEFAULT_APP_ALLOWLIST} from './guard.mjs';
+import {isAllowedWindow} from './guard.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url));
 let mainWindow,overlayWindow,controller,configStore,recorder,tray,quitting=false;
 let choices=[];let quitReady=false;let quitPending=false;
@@ -43,10 +43,10 @@ function handle(name,fn,{allowOverlay=false}={}){
 function installIpc(){
   handle('get-state',()=>({status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()}));
   handle('windows',async()=>{const result=await listWindows();
-    choices=(result.windows||[]).filter(w=>classifyWindow(w).allowed&&DEFAULT_APP_ALLOWLIST.includes(w.processName.toLowerCase()));
+    choices=(result.windows||[]).filter(w=>isAllowedWindow(w,configStore.load().allowedApps));
     return {ok:result.ok,windows:choices,error:result.error};});
   handle('select-window',handle=>{
-    const target=choices.find(w=>w.handle===handle);if(!target)throw new Error('Refresh and choose an available window.');
+    const target=choices.find(w=>w.handle===handle&&isAllowedWindow(w,configStore.load().allowedApps));if(!target)throw new Error('Refresh and choose an available window.');
     controller.selectTarget(target);return {ok:true,status:controller.getStatus()};
   });
   handle('set-mode',async input=>{
@@ -71,6 +71,15 @@ function installIpc(){
   });
   handle('stop',()=>({ok:true,status:controller.emergencyStop('local-overlay')}),{allowOverlay:true});
   handle('clear-stop',()=>{controller.clearLocalStop();return {ok:true};});
+  handle('set-studio-access',enabled=>{
+    if(typeof enabled!=='boolean')throw new Error('Invalid Studio preference.');
+    controller.emergencyStop('studio-access-changed');
+    const allowedApps=configStore.load().allowedApps.filter(name=>name!=='robloxstudiobeta');
+    if(enabled)allowedApps.push('robloxstudiobeta');
+    configStore.save({allowedApps});
+    choices=[];controller.selectTarget(null);
+    return {ok:true,config:configStore.publicView(),status:controller.getStatus()};
+  });
   handle('save-config',input=>{
     controller.emergencyStop('settings-changed');
     const next=configStore.save(input||{});
@@ -134,10 +143,10 @@ app.on('before-quit',event=>{
   quitting=true;
   // Preserve Electron's synchronous quit when there is nothing to flush. Deferring
   // every quit can leave automation waiting for a second app.quit() during teardown.
-  const needsFlush=Boolean(recorder?.active||recorder?.starting);
+  const needsFlush=Boolean(recorder?.active||recorder?.starting||controller?.operation);
   if(needsFlush){event.preventDefault();quitPending=true;}
   controller?.emergencyStop('app-quit');controller?.relay?.disconnect();globalShortcut.unregisterAll();
   if(!needsFlush){quitReady=true;return;}
-  Promise.resolve(recorder.stop()).catch(()=>{}).finally(()=>{quitReady=true;setImmediate(()=>app.quit());});
+  Promise.allSettled([recorder.stop(),controller.whenIdle()]).finally(()=>{quitReady=true;setImmediate(()=>app.quit());});
 });
 app.on('window-all-closed',()=>{});

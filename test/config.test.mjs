@@ -76,3 +76,16 @@ test('relay configuration accepts TLS origins or explicit loopback and rejects c
   for (const url of ['https://relay.example.test', 'http://127.0.0.1:8787', 'http://localhost:8787', 'http://[::1]:8787']) assert.ok(relayOrigin(url));
   for (const url of ['http://public.example.test', 'http://10.0.0.2:8787', 'https://user:pass@example.test', 'https://example.test/path', 'https://example.test/?key=secret', 'https://example.test/#secret', 'file:///tmp/x']) assert.throws(() => relayOrigin(url));
 });
+
+test('Studio requires explicit opt-in and preserves custom apps and encrypted pairing through reload', (t) => {
+  const { store, file, codec } = setup(t);
+  assert.deepEqual(store.load().allowedApps, ['msedge', 'chrome', 'firefox', 'notepad']);
+  store.save({ ...pairing, allowedApps: ['firefox'] });
+  const reloaded = new ConfigStore(file, codec);
+  assert.deepEqual(reloaded.load().allowedApps, ['firefox']);
+  reloaded.save({ allowedApps: [...reloaded.load().allowedApps, 'robloxstudiobeta', 'code', 'unknown'] });
+  assert.deepEqual(store.load().allowedApps, ['firefox', 'robloxstudiobeta']);
+  for (const field of ['hostToken', 'ownerToken', 'botToken']) assert.equal(store.load()[field], pairing[field]);
+  store.save({ allowedApps: ['firefox'] });
+  assert.deepEqual(reloaded.load().allowedApps, ['firefox']);
+});

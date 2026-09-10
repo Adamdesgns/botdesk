@@ -11,6 +11,7 @@ export const COMMANDS = Object.freeze([
   'snapshot',
   'list_windows',
   'click',
+  'drag',
   'type',
   'key',
   'scroll',

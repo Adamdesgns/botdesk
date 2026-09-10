@@ -6,6 +6,7 @@ const DENY_PATTERNS = Object.freeze({
 });
 const SAFE_KEYS = new Set(['ENTER', 'TAB', 'ESCAPE', 'BACKSPACE', 'DELETE', 'ARROWUP', 'ARROWDOWN', 'ARROWLEFT', 'ARROWRIGHT', 'HOME', 'END', 'PAGEUP', 'PAGEDOWN', 'CTRL+A', 'CTRL+Z', 'ALT+LEFT', 'ALT+RIGHT', 'F5']);
 export const DEFAULT_APP_ALLOWLIST = Object.freeze(['msedge', 'chrome', 'firefox', 'notepad']);
+export const SUPPORTED_APP_ALLOWLIST = Object.freeze([...DEFAULT_APP_ALLOWLIST, 'robloxstudiobeta']);
 const UNSAFE_APPS = new Set(['powershell', 'pwsh', 'cmd', 'windowsterminal', 'conhost', 'regedit', 'taskmgr', 'mmc', 'explorer', 'code', 'wscript', 'cscript', 'python', 'pythonw']);
 const normalizeApp = (value) => String(value || '').trim().toLowerCase().replace(/\.exe$/, '');
 const reject = (category, reason) => ({ allowed: false, category, reason });
@@ -23,6 +24,11 @@ export function classifyWindow(window = {}) {
   if (UNSAFE_APPS.has(normalizeApp(window.processName))) return reject('app-blocked', 'Shells, system tools and code editors are off-limits.');
   return { allowed: true, category: 'ordinary', reason: '' };
 }
+export function isAllowedWindow(window, allowedApps = DEFAULT_APP_ALLOWLIST) {
+  const app = normalizeApp(window?.processName);
+  return SUPPORTED_APP_ALLOWLIST.includes(app) && Array.isArray(allowedApps) &&
+    allowedApps.map(normalizeApp).includes(app) && classifyWindow(window).allowed;
+}
 export function validateCommand(name, args = {}, context = {}) {
   if (!isCommand(name)) return reject('unknown-command', 'Unknown command.');
   if (name === 'status' || name === 'stop_all') return { allowed: true };
@@ -35,10 +41,26 @@ export function validateCommand(name, args = {}, context = {}) {
   const verdict = classifyWindow(foreground);
   if (!verdict.allowed) return verdict;
   const app = normalizeApp(foreground.processName);
-  if (!(context.allowedApps || DEFAULT_APP_ALLOWLIST).map(normalizeApp).includes(app)) return reject('app-blocked', 'The focused app is not on the local allowlist.');
+  if (!isAllowedWindow(foreground, context.allowedApps || DEFAULT_APP_ALLOWLIST)) return reject('app-blocked', 'The focused app is not on the local allowlist.');
   if (name === 'click') {
     const g = foreground.geometry;
     if (!Number.isInteger(args.x) || !Number.isInteger(args.y) || !g || args.x < 0 || args.y < 0 || args.x >= g.width || args.y >= g.height) return reject('bad-arguments', 'Click coordinates must fall inside the approved screenshot.');
+  }
+  if (name === 'drag') {
+    const g = foreground.geometry;
+    const keys = args && typeof args === 'object' ? Object.keys(args) : [];
+    if (keys.length !== 3 || keys.some(key => !['snapshotId', 'points', 'durationMs'].includes(key)) ||
+        typeof args.snapshotId !== 'string' || !args.snapshotId || !Array.isArray(args.points) ||
+        args.points.length < 2 || args.points.length > 64 || !Number.isInteger(args.durationMs) ||
+        args.durationMs < 100 || args.durationMs > 2000 || !g ||
+        args.points.some((point, index, points) => !point || Object.keys(point).length !== 2 ||
+          !Object.hasOwn(point, 'x') || !Object.hasOwn(point, 'y') ||
+          !Number.isInteger(point.x) || !Number.isInteger(point.y) ||
+          point.x < 0 || point.y < 0 || point.x > 32767 || point.y > 32767 ||
+          point.x >= g.width || point.y >= g.height ||
+          (index > 0 && point.x === points[index - 1].x && point.y === points[index - 1].y))) {
+      return reject('bad-arguments', 'Drag needs a fresh screenshot, 2–64 distinct consecutive points inside it, and a duration of 100–2000 ms.');
+    }
   }
   if (name === 'type' && (typeof args.text !== 'string' || args.text.length < 1 || args.text.length > 4000 || /[\u0000-\u001f\u007f]/.test(args.text) || /(?:javascript|vbscript|data|file|shell|ms-settings|powershell):/i.test(args.text))) return reject('bad-arguments', 'Text must be plain printable text, up to 4,000 characters.');
   if (name === 'key' && !SAFE_KEYS.has(String(args.key || '').toUpperCase())) return reject('key-blocked', 'That shortcut is not permitted.');

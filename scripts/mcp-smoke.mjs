@@ -48,8 +48,8 @@ export async function runMcpSmoke() {
   try {
     await client.connect(transport, { timeout: 10_000 });
     const tools = await client.listTools();
-    assert.equal(tools.tools.length, 11);
-    for (const suffix of ['status', 'screenshot', 'snapshot', 'scroll', 'click', 'type', 'key', 'record_start', 'record_stop', 'stop_all']) {
+    assert.equal(tools.tools.length, 12);
+    for (const suffix of ['status', 'screenshot', 'snapshot', 'scroll', 'click', 'drag', 'type', 'key', 'record_start', 'record_stop', 'stop_all']) {
       assert.ok(tools.tools.some((tool) => tool.name === `botdesk_${suffix}`));
     }
     const status = await client.callTool({ name: 'botdesk_status', arguments: {} });
@@ -66,6 +66,10 @@ export async function runMcpSmoke() {
     assert.equal(requests.length, beforeInvalid, 'Invalid input must never reach relay');
     const scroll = await client.callTool({ name: 'botdesk_scroll', arguments: { snapshotId: 'smoke-controls', deltaY: 120 } });
     assert.notEqual(scroll.isError, true);
+    const dragArgs = { snapshotId: 'fixture-drag', points: [{ x: 1, y: 2 }, { x: 12, y: 32 }], durationMs: 300 };
+    const drag = await client.callTool({ name: 'botdesk_drag', arguments: dragArgs });
+    assert.notEqual(drag.isError, true);
+    assert.deepEqual(requests.at(-1).args, dragArgs);
     for (const name of ['botdesk_record_stop', 'botdesk_stop_all']) {
       assert.notEqual((await client.callTool({ name, arguments: {} })).isError, true);
     }

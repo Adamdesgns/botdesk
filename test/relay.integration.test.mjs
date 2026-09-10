@@ -160,6 +160,19 @@ test('single bot lease, single in-flight command, replay denial, owner preview i
   assert.equal((await command(c, 'click', 'bot-b')).body.error, 'bot-lease-held');
 });
 
+test('drag is a distinct armed SDK command; STOP cancels it and raw button actions stay unavailable', async t => {
+  const c = await provision(); const socket = await connected(c, t);
+  const args = { snapshotId: 'fresh-drag', points: [{ x: 10, y: 20 }, { x: 60, y: 90 }], durationMs: 500 };
+  assert.equal((await api(botRoute(c), c.botToken, { name: 'drag', args }, { 'x-bot-id': 'drag-test' })).body.error, 'not-armed');
+  await arm(c, socket);
+  const pending = api(botRoute(c), c.botToken, { name: 'drag', args }, { 'x-bot-id': 'drag-test' });
+  const message = await socket.next('command');
+  assert.equal(message.name, 'drag'); assert.deepEqual(message.args, args);
+  assert.equal((await command(c, 'stop_all', 'owner-stop')).body.result.mode, 'off');
+  assert.equal((await pending).body.error, 'remote-stop');
+  for (const name of ['mouse_down', 'mouse_up', 'release_left']) assert.equal((await command(c, name)).status, 400);
+});
+
 test('pause preempts command; late result cannot rearm; stop works without a bot lease', async t => {
   const c = await provision(); const socket = await connected(c, t); await arm(c, socket);
   const first = command(c, 'type'); const message = await socket.next('command');

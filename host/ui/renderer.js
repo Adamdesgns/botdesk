@@ -150,15 +150,17 @@ function updateClock() {
 function render(status) {
   latestStatus = status || { mode: 'off', relay: {} };
   const mode = latestStatus.mode || 'off';
+  byId('sessionMinutes').disabled = ['armed', 'running'].includes(mode) || pending.has('sessionMinutes');
   byId('modeBadge').className = 'mode ' + mode;
   setText('modeBadge', mode.toUpperCase());
   const titles = { off: 'Bot access is off', armed: 'Waiting for an approved bot', running: 'A bot is controlling this window', paused: 'Bot access is paused' };
   setText('statusTitle', titles[mode] || mode);
-  setText('statusDetail', latestStatus.stopLatched ? 'Local stop is locked. Unlock it here before remote arming.' : latestStatus.expiresAt ? 'Access expires ' + new Date(latestStatus.expiresAt).toLocaleTimeString() + '.' : 'Bot commands are rejected until you arm a session.');
+  setText('statusDetail', latestStatus.inputSafetyFault ? 'Mouse release could not be confirmed. Check the mouse locally, then restart BotDesk. Access remains locked off.' : latestStatus.stopLatched ? 'Local stop is locked. Unlock it here before remote arming.' : latestStatus.expiresAt ? 'Access expires ' + new Date(latestStatus.expiresAt).toLocaleTimeString() + '.' : 'Bot commands are rejected until you arm a session.');
   setText('relayState', latestStatus.relay?.authenticated ? 'Securely connected' : latestStatus.relay?.connected ? 'Authenticating' : 'Offline');
   setText('hostState', latestStatus.hostId || 'Not configured');
   setText('recordingState', latestStatus.recording ? 'Recording selected window' : 'Stopped');
   byId('unlockButton').hidden = !latestStatus.stopLatched;
+  byId('unlockButton').disabled = Boolean(latestStatus.inputSafetyFault);
   const target = latestStatus.targetWindow;
   setText('selectedWindowName', target ? target.title + ' · ' + target.processName : 'No window selected');
   setText('targetDetail', target ? 'Selected: ' + target.title + ' (' + target.processName + '). BotDesk checks this window before every action.' : 'Choose an app window before arming. Only that window is captured and controlled.');
@@ -170,6 +172,7 @@ async function load({ fillForm = true } = {}) {
   const state = checked(await window.botdesk.getState());
   if (!state?.config || !state?.status) throw new Error('Could not read this PC’s current setup.');
   savedConfig = { ...state.config };
+  byId('studioAccess').checked = (savedConfig.allowedApps || []).includes('robloxstudiobeta');
   if (fillForm) {
     for (const id of fields) byId(id).value = savedConfig[id] || '';
     byId('allowedApps').value = (savedConfig.allowedApps || []).join(', ');
@@ -190,7 +193,7 @@ async function refreshState(options) {
 
 byId('armButton').onclick = async () => {
   const preserveDraft = draftChanged();
-  const result = await action(() => window.botdesk.setMode('armed', 480), { ids: ['armButton'], label: 'STARTING…' });
+  const result = await action(() => window.botdesk.setMode('armed', Number(byId('sessionMinutes').value)), { ids: ['armButton', 'sessionMinutes'], label: 'STARTING…' });
   if (result) await refreshState({ fillForm: !preserveDraft });
 };
 byId('pauseButton').onclick = async () => {
@@ -214,6 +217,18 @@ byId('copyOwnerLink').onclick = async () => {
   if (await action(() => window.botdesk.copyOwnerLink(), { ids: ['copyOwnerLink'], label: 'COPYING…', section: 'copy' })) notice('Private phone link copied. Keep it for your own phone.', 'copy', 'success');
 };
 byId('openCaptures').onclick = () => action(() => window.botdesk.openCaptures(), { ids: ['openCaptures'], label: 'OPENING…' });
+byId('studioAccess').onchange = async () => {
+  const enabled = byId('studioAccess').checked;
+  const result = await action(() => window.botdesk.setStudioAccess(enabled), { ids: ['studioAccess', 'targetWindow', 'refreshWindows'], section: 'window' });
+  if (result) {
+    const draftApps = readDraft().allowedApps.filter(name => name !== 'robloxstudiobeta');
+    if (enabled) draftApps.push('robloxstudiobeta');
+    byId('allowedApps').value = draftApps.join(', ');
+    byId('targetWindow').replaceChildren(new Option('Refresh to choose a window', ''));
+    notice('Studio preference saved. Refresh, select a window, and unlock the local stop before starting.', 'window', 'success');
+  }
+  await refreshState({ fillForm: false });
+};
 byId('refreshWindows').onclick = async () => {
   const result = await action(() => window.botdesk.listWindows(), { ids: ['refreshWindows', 'targetWindow'], label: 'CHECKING WINDOWS…', section: 'window' });
   if (!result) return;
@@ -223,7 +238,7 @@ byId('refreshWindows').onclick = async () => {
   for (const window of windows) select.add(new Option(window.processName + ' — ' + window.title, window.handle));
   const selected = windows.find((window) => window.handle === latestStatus.targetWindow?.handle);
   if (selected) select.value = selected.handle;
-  if (!windows.length) notice('No verified app windows available. Open an ordinary browser page or Notepad, then refresh.', 'window');
+  if (!windows.length) notice('No verified app windows available. Open an allowed app, then refresh.', 'window');
   else notice(`${windows.length} verified app window${windows.length === 1 ? '' : 's'} available. Choose the one your bot should use.`, 'window');
 };
 byId('targetWindow').onchange = async () => {
@@ -244,7 +259,7 @@ byId('importPairing').onclick = () => {
   } catch { notice('Paste the host pairing JSON from your private provisioning file. Nothing has been saved.', 'pair', 'error'); }
 };
 
-const configControls = [...fields, 'allowedApps', 'remoteArm', 'startAtLogin', 'pairingJson', 'importPairing', 'saveButton', 'savePhoneButton'];
+const configControls = [...fields, 'allowedApps', 'remoteArm', 'startAtLogin', 'pairingJson', 'importPairing', 'saveButton', 'savePhoneButton', 'studioAccess'];
 async function saveSettings(section) {
   if (configControls.some((id) => pending.has(id))) return;
   const config = readDraft();

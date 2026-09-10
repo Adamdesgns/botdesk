@@ -17,7 +17,7 @@
 
     <div class="page-intro">
       <div><p class="eyebrow">FOR GROK BOT OWNERS</p><h1>Your bot. Your PC.<br><span>You hold the switch.</span></h1></div>
-      <p class="intro-copy">Choose one window. Set the hours.<br>Let your bot work while you’re away.</p>
+      <p class="intro-copy">Choose one window. Set the timer.<br>Let your bot work while you’re away.</p>
     </div>
 
     <div class="desk-layout">
@@ -51,12 +51,13 @@
         <div class="step-panel" data-panel="window" id="windowPanel" role="tabpanel" aria-labelledby="windowTab" hidden>
           <div class="panel-heading"><span class="step-label">STEP 02</span><h3>One window. A clear boundary.</h3><p>Open the app your bot should use, then select its window here. Your bot’s screenshots and actions stay inside that selected window.</p></div>
           <div class="window-illustration" aria-hidden="true"><div class="mock-titlebar"><i></i><i></i><i></i><span>YOUR SELECTED WINDOW</span></div><div class="mock-content"><div class="mock-side"></div><div class="mock-lines"><b></b><b></b><b></b><span>BOT ACCESS</span></div><div class="mock-cursor">↖</div></div></div>
+          <label class="toggle-row" for="studioAccess"><span><strong>Allow Roblox Studio for this PC</strong><small>For local game tests. Changing this stops access and clears the selected window.</small></span><input id="studioAccess" type="checkbox"></label>
           <div class="field-heading"><label for="targetWindow">Available app windows</label><button id="refreshWindows" class="text-button" type="button">Refresh <span aria-hidden="true">↻</span></button></div>
           <select id="targetWindow" aria-describedby="targetDetail"><option value="">Refresh to choose a window</option></select>
           <p class="field-help" id="targetDetail">Choose an app window before arming. Only that window is captured and controlled.</p>
           <p class="inline-feedback" id="windowFeedback" role="status"></p>
           <div class="boundary-note"><span aria-hidden="true">↳</span><p>Use a dedicated browser profile for bot work. You’ll choose the window again after restarting BotDesk.</p></div>
-          <div class="panel-footer"><span>Edge, Chrome, Firefox or Notepad</span><button id="continuePhone" class="text-button" type="button">Phone access <span aria-hidden="true">→</span></button></div>
+          <div class="panel-footer"><span>Browsers, Notepad, or opted-in Roblox Studio</span><button id="continuePhone" class="text-button" type="button">Phone access <span aria-hidden="true">→</span></button></div>
         </div>
 
         <div class="step-panel" data-panel="phone" id="phonePanel" role="tabpanel" aria-labelledby="phoneTab" hidden>
@@ -75,7 +76,8 @@
         <h2 id="statusTitle" aria-live="polite">Bot access is off</h2>
         <p class="console-detail" id="statusDetail">Bot commands are rejected until you arm a session.</p>
         <div class="clock-block"><span>TIME REMAINING</span><strong id="sessionClock">—</strong></div>
-        <div class="session-actions"><button id="armButton" class="button cream" type="button">Go live — 8 hours <span aria-hidden="true">↗</span></button><button id="pauseButton" class="button outline" type="button">Pause access</button><button id="stopButton" class="button stop" type="button"><span class="stop-square" aria-hidden="true"></span>STOP NOW</button><button id="unlockButton" class="button outline" type="button" hidden>Unlock local stop</button></div>
+        <label class="session-duration" for="sessionMinutes">Session length<select id="sessionMinutes"><option value="5">5 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="480">8 hours</option></select></label>
+        <div class="session-actions"><button id="armButton" class="button cream" type="button">Go live <span aria-hidden="true">↗</span></button><button id="pauseButton" class="button outline" type="button">Pause access</button><button id="stopButton" class="button stop" type="button"><span class="stop-square" aria-hidden="true"></span>STOP NOW</button><button id="unlockButton" class="button outline" type="button" hidden>Unlock local stop</button></div>
         <dl class="session-facts"><div><dt>PC connection</dt><dd id="relayState">Offline</dd></div><div><dt>Selected window</dt><dd id="selectedWindowName">Choose a window</dd></div><div><dt>Bot activity</dt><dd id="botActivity">No active bot</dd></div><div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div></dl>
 
         <p class="console-hint" id="goLiveHint">Pair this PC and choose a window before going live.</p>

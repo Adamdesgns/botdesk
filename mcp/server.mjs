@@ -19,6 +19,7 @@ export const TOOL_DEFS = [
   { name: 'botdesk_snapshot', description: 'Read bounded Windows UI Automation controls from only the owner-approved foreground window. Returns target dimensions and a fresh snapshotId for the next input. Password fields and sensitive windows are blocked. No arbitrary JavaScript or shell execution.', inputSchema: schema() },
   { name: 'botdesk_list_windows', description: 'List eligible approved Windows targets while armed. This does not grant input permission or change the selected window.', inputSchema: schema() },
   { name: 'botdesk_click', description: 'Click x/y pixels relative to the last approved target image. A fresh snapshotId from screenshot or snapshot is required; a changed window or stale snapshot is rejected.', inputSchema: schema({ snapshotId, x: { type: 'integer', minimum: 0, maximum: 32767 }, y: { type: 'integer', minimum: 0, maximum: 32767 } }, ['snapshotId', 'x', 'y']) },
+  { name: 'botdesk_drag', description: 'Draw one bounded left-button drag in the approved target using a fresh snapshotId. Supply 2 to 64 distinct consecutive integer x/y points relative to the last target image, and durationMs from 100 to 2000. Input stops and the button is released if the target, geometry, sensitive controls, or permission changes. Capture again before each action.', inputSchema: schema({ snapshotId, points: { type: 'array', minItems: 2, maxItems: 64, items: schema({ x: { type: 'integer', minimum: 0, maximum: 32767 }, y: { type: 'integer', minimum: 0, maximum: 32767 } }, ['x', 'y']) }, durationMs: { type: 'integer', minimum: 100, maximum: 2000 } }, ['snapshotId', 'points', 'durationMs']) },
   { name: 'botdesk_type', description: 'Type plain text into the approved target using a fresh snapshotId. Input into password/sensitive controls is blocked. Capture again before the next action.', inputSchema: schema({ snapshotId, text: { type: 'string', minLength: 1, maxLength: 4000 } }, ['snapshotId', 'text']) },
   { name: 'botdesk_key', description: 'Press one permitted navigation/editing key in the approved target with a fresh snapshotId. Clipboard and system shortcuts are unavailable.', inputSchema: schema({ snapshotId, key: { type: 'string', enum: keys } }, ['snapshotId', 'key']) },
   { name: 'botdesk_scroll', description: 'Scroll the approved target using a fresh snapshotId. deltaY is a nonzero integer from -1200 to 1200; positive scrolls down, negative up.', inputSchema: schema({ snapshotId, deltaY: { type: 'integer', minimum: -1200, maximum: 1200 } }, ['snapshotId', 'deltaY']) },
@@ -57,6 +58,14 @@ export function validateToolArgs(toolName, args) {
     if (rule.type === 'string' && (typeof value !== 'string' || value.length < (rule.minLength || 0) || value.length > (rule.maxLength || Infinity) || (rule.enum && !rule.enum.includes(value)))) throw new Error(`Invalid ${key}.`);
   }
   if (toolName === 'botdesk_scroll' && args.deltaY === 0) throw new Error('deltaY must be nonzero.');
+  if (toolName === 'botdesk_drag') {
+    if (!Array.isArray(args.points) || args.points.length < 2 || args.points.length > 64) throw new Error('Invalid points.');
+    for (let index = 0; index < args.points.length; index++) {
+      const point = args.points[index], previous = args.points[index - 1];
+      if (!point || typeof point !== 'object' || Array.isArray(point) || Object.keys(point).length !== 2 || !Object.hasOwn(point, 'x') || !Object.hasOwn(point, 'y') || ![point.x, point.y].every((value) => Number.isInteger(value) && value >= 0 && value <= 32767)) throw new Error('Invalid point.');
+      if (previous && point.x === previous.x && point.y === previous.y) throw new Error('Consecutive drag points must differ.');
+    }
+  }
   if (toolName === 'botdesk_type' && (/[\u0000-\u001f\u007f]/.test(args.text) || /(?:javascript|vbscript|data|file|shell|ms-settings|powershell):/i.test(args.text))) throw new Error('Control characters and executable URL schemes are not permitted in plain text.');
   return tool.name.slice('botdesk_'.length);
 }

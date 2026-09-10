@@ -9,6 +9,7 @@ export class DesktopExecutor{
       case 'snapshot':return native.snapshot({expectedWindow:args.expectedWindow},options);
       case 'list_windows':{const w=await this.foreground(options);return {ok:true,windows:[w]};}
       case 'click':return native.click({...args,x:args.geometry.x+args.x,y:args.geometry.y+args.y},options);
+      case 'drag':return native.drag(args,options);
       case 'type':return native.typeText(args,options);
       case 'key':return native.pressKey(args,options);
       case 'scroll':return native.scroll(args,options);

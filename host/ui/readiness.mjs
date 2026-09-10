@@ -22,7 +22,7 @@ export function deriveReadiness(config = {}, status = {}) {
   else if (!selected) goLiveHint = 'Choose a window before you go live.';
   else if (!paired) goLiveHint = 'Save this PC’s pairing details first.';
   else if (!connected) goLiveHint = 'Connect the relay before going live.';
-  else goLiveHint = remoteEnabled ? 'Starts an eight-hour session. Pause or stop at any time.' : 'Starts an eight-hour session and enables phone access.';
+  else goLiveHint = remoteEnabled ? 'Uses the selected session length. Pause or stop at any time.' : 'Uses the selected session length and enables phone access.';
   return { paired, connected, selected, remoteEnabled, completed, count, nextIncomplete, connection, next, goLiveHint,
     ready: count === SETUP_STEPS.length && !status.stopLatched,
     labels: { pair: connection, window: selected ? 'Window selected' : 'Choose a window', phone: completed.phone ? 'Enabled and saved' : 'Phone access off' }

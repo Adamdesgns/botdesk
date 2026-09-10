@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { DEFAULT_APP_ALLOWLIST } from './guard.mjs';
+import { DEFAULT_APP_ALLOWLIST, SUPPORTED_APP_ALLOWLIST } from './guard.mjs';
 const SECRETS=['hostToken','ownerToken','botToken'];
 const DEFAULTS={relayUrl:'',hostId:'',hostToken:'',ownerToken:'',botToken:'',allowRemoteArm:false,startAtLogin:false,allowedApps:[...DEFAULT_APP_ALLOWLIST]};
 export function relayOrigin(value){
@@ -23,7 +23,8 @@ export class ConfigStore{
       if(raw[key] && !raw[key].startsWith('dpapi:'))throw new Error('Unencrypted BotDesk credentials rejected. Import pairing again.');
       result[key]=raw[key]?this.decrypt(Buffer.from(raw[key].slice(6),'base64')):'';
     }
-    result.allowedApps=DEFAULT_APP_ALLOWLIST.filter(x=>result.allowedApps.includes(x));
+    if(!Array.isArray(result.allowedApps))throw new Error('Invalid app list.');
+    result.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>result.allowedApps.includes(x));
     return result;
   }
   save(update){
@@ -37,7 +38,7 @@ export class ConfigStore{
     if(typeof next.hostId!=='string'||(next.hostId&&!/^[a-z0-9-]{1,64}$/.test(next.hostId)))throw new Error('Invalid host ID.');
     next.allowRemoteArm=next.allowRemoteArm===true;next.startAtLogin=next.startAtLogin===true;
     if(!Array.isArray(next.allowedApps))throw new Error('Invalid app list.');
-    next.allowedApps=DEFAULT_APP_ALLOWLIST.filter(x=>next.allowedApps.includes(x));
+    next.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>next.allowedApps.includes(x));
     const stored={...next};
     for(const key of SECRETS){
       if(next[key]&&!this.encrypt)throw new Error('Windows credential encryption unavailable.');

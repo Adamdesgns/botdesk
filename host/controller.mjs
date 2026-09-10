@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { clampArmMinutes } from '../shared/protocol.mjs';
 import { validateCommand } from './guard.mjs';
-const INPUT = new Set(['click', 'type', 'key', 'scroll']);
+const INPUT = new Set(['click', 'type', 'key', 'scroll', 'drag']);
 const READ = new Set(['screenshot', 'snapshot']);
 const fail = (error, message = error) => ({ok:false, error, message});
 
@@ -12,7 +12,7 @@ export class HostController extends EventEmitter {
     this.mode='off'; this.expiresAt=null; this.activeBot=null; this.leaseEndsAt=0;
     this.relayStatus={connected:false, authenticated:false}; this.relay=null;
     this.targetWindow=null; this.snapshots=new Map(); this.epoch=0; this.controlGeneration=null;
-    this.operation=null; this.expiryTimer=null; this.seen=new Set(); this.stopLatched=false;
+    this.operation=null; this.expiryTimer=null; this.seen=new Set(); this.stopLatched=false; this.inputSafetyFault=null;
     this.recording=false; this.recordAbort=null;
   }
   attachRelay(relay) {
@@ -26,13 +26,15 @@ export class HostController extends EventEmitter {
   getStatus() {
     if (this.expiresAt && this.clock()>=this.expiresAt) this.setMode('off', {source:'expiry'});
     return {mode:this.mode, expiresAt:this.expiresAt, activeBot:this.activeBot, recording:this.recording,
-      relay:this.relayStatus, stopLatched:this.stopLatched, targetWindow:this.targetWindow,
+      relay:this.relayStatus, stopLatched:this.stopLatched, inputSafetyFault:this.inputSafetyFault, targetWindow:this.targetWindow,
       allowRemoteArm:Boolean(this.configStore.load().allowRemoteArm), hostId:this.configStore.load().hostId||null};
   }
   selectTarget(window) { this.setMode('off', {source:'target-changed'}); this.targetWindow=window; this.emitStatus(); }
-  clearLocalStop() { this.stopLatched=false; this.emitStatus(); }
+  whenIdle() { return this.idlePromise || Promise.resolve(); }
+  clearLocalStop() { if(this.inputSafetyFault)throw new Error(this.inputSafetyFault);this.stopLatched=false; this.emitStatus(); }
   setMode(mode, {minutes=480, expiresAt, source='local', generation, notify=true}={}) {
     if (!['off','armed','paused'].includes(mode)) throw new Error('invalid-mode');
+    if(mode==='armed'&&this.inputSafetyFault)throw new Error(this.inputSafetyFault);
     if (mode==='armed' && (this.stopLatched||!this.targetWindow)) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
     this.epoch++; this.operation?.abort(); this.snapshots.clear();
     this.mode=mode; this.activeBot=null; this.leaseEndsAt=0; clearTimeout(this.expiryTimer);
@@ -80,6 +82,7 @@ export class HostController extends EventEmitter {
     if(this.leaseEndsAt<=this.clock())this.activeBot=null;
     if(botId!=='owner-preview'&&this.activeBot&&this.activeBot!==botId)return fail('bot-lease-held');
     const operation=new AbortController();this.operation=operation;this.operationName=name;const epoch=this.epoch;
+    let finished;this.idlePromise=new Promise(resolve=>{finished=resolve;});
     const timer=setTimeout(()=>operation.abort(),Math.max(1,Math.min(20000,(expiresAt||this.clock()+20000)-this.clock())));
     timer.unref?.();
     try {
@@ -118,7 +121,7 @@ export class HostController extends EventEmitter {
       }
       if(botId!=='owner-preview'){this.activeBot=botId;this.leaseEndsAt=this.clock()+60000;}
       this.mode='running';this.emitStatus();
-      let result;const nativeArgs={...args,expectedWindow:this.targetWindow,geometry:snapshot?.window.geometry};
+      let result;const nativeArgs={...args,expectedWindow:this.targetWindow,geometry:snapshot?.window.geometry,snapshotTitle:snapshot?.window.title};
       if(name==='record_start') {
         if(this.recording)return fail('already-recording');
         const abort=new AbortController();this.recordAbort=abort;
@@ -128,6 +131,12 @@ export class HostController extends EventEmitter {
         if(epoch===this.epoch&&!operation.signal.aborted&&!abort.signal.aborted&&this.recordAbort===abort&&result.ok)this.recording=true;
         else {abort.abort();await this.stopRecording();}
       } else result=await this.executor.run(name,nativeArgs,{signal:operation.signal});
+      if(['windows-drag-stop-unconfirmed','windows-drag-release-unconfirmed'].includes(result?.error)) {
+        this.inputSafetyFault=result.error;
+        this.emergencyStop('input-safety-fault');
+        this.auditLog.write({botId,command:name,outcome:result.error,app:foreground.processName});
+        return fail(result.error);
+      }
       if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
       if(result.ok&&READ.has(name)) {
         const snapshotId=randomUUID();
@@ -139,7 +148,7 @@ export class HostController extends EventEmitter {
       return result.ok?{ok:true,result}:fail(result.error||'command-failed');
     }catch(error){return fail(operation.signal.aborted?'command-cancelled':error.message);}
     finally {clearTimeout(timer);if(this.operation===operation)this.operation=null;
-      if(epoch===this.epoch&&this.mode==='running')this.mode='armed';this.emitStatus();}
+      if(epoch===this.epoch&&this.mode==='running')this.mode='armed';this.emitStatus();finished();}
   }
   async stopRecording(){this.recordAbort?.abort();this.recordAbort=null;this.recording=false;
     try{return await this.executor.recordStop();}catch{return {ok:false,error:'recording-stop-failed'};}}

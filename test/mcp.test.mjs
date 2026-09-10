@@ -127,6 +127,6 @@ test('screenshot content carries target pixels and snapshot id and rejects inval
 
 test('SDK client starts the MCP executable and completes tools over real stdio', { timeout: 20_000 }, async () => {
   const result = await runMcpSmoke();
-  assert.equal(result.toolCount, 11);
-  assert.equal(result.relayRequests, 6);
+  assert.equal(result.toolCount, 12);
+  assert.equal(result.relayRequests, 7);
 });

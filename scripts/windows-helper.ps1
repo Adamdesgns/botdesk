@@ -51,7 +51,7 @@ public static class BotDeskNative {
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
   public delegate bool EnumWindowProc(IntPtr hwnd,IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr data);
-  static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad" };
+  static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad","robloxstudiobeta" };
   static readonly Regex Denied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac|regedit|powershell|terminal|devtools)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|registry\s*editor|task\s*manager|device\s*manager|control\s*panel|group\s*policy|developer\s*tools|command\s*prompt",RegexOptions.IgnoreCase);
   static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+Z","ALT+LEFT","ALT+RIGHT","F5" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
@@ -244,6 +244,83 @@ public static class BotDeskNative {
     INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=2;
     INPUT up=down; up.U.mi.dwFlags=4; Emit(new INPUT[]{down,up});
   }
+  static readonly object DragLock=new object();
+  static bool DragHeld=false, DragCancelled=false;
+  static string DragCancelReason="drag-cancelled";
+  static void DragProgress(string state) { Console.Out.WriteLine("{\"dragProgress\":\""+state+"\"}"); Console.Out.Flush(); }
+  static void ReleaseDragLocked() {
+    if(!DragHeld) return;
+    INPUT up=new INPUT(); up.type=0; up.U.mi.dwFlags=4;
+    Emit(new INPUT[]{up}); DragHeld=false; DragProgress("button-released");
+  }
+  // Safety-only entry point used after the original helper has exited. It cannot
+  // press a button, move the cursor, type, or select another target.
+  public static void ReleaseLeft() { INPUT up=new INPUT(); up.type=0; up.U.mi.dwFlags=4; Emit(new INPUT[]{up}); }
+  static void CancelDrag(string reason) {
+    lock(DragLock) {
+      DragCancelled=true; DragCancelReason=reason;
+      try { ReleaseDragLocked(); } catch { /* finally/parent cleanup retries */ }
+    }
+  }
+  static void DragCanContinue() { if(DragCancelled) throw Block(DragCancelReason); }
+  static void DragCheck(string handle,uint pid,string title,int left,int top,int width,int height,int x,int y) {
+    lock(DragLock) { DragCanContinue(); }
+    IntPtr hwnd=Check(handle,pid,true); RECT rect;
+    if(!GetWindowRect(hwnd,out rect) || rect.Left!=left || rect.Top!=top || rect.Right-rect.Left!=width || rect.Bottom-rect.Top!=height) throw Block("target-moved-during-drag");
+    var currentTitle=new StringBuilder(1024); GetWindowText(hwnd,currentTitle,currentTitle.Capacity);
+    if(!String.Equals(currentTitle.ToString(),title,StringComparison.Ordinal)) throw Block("target-title-changed");
+    PointCheck(hwnd,pid,x,y); ModifiersReleased();
+    lock(DragLock) { DragCanContinue(); }
+  }
+  public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
+    if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
+    for(int i=0;i<xs.Length;i++) {
+      if(xs[i]<0 || ys[i]<0 || xs[i]>=width || ys[i]>=height || xs[i]>32767 || ys[i]>32767 || (i>0 && xs[i]==xs[i-1] && ys[i]==ys[i-1])) throw Block("invalid-drag-point");
+      if((long)left+xs[i]>Int32.MaxValue || (long)left+xs[i]<Int32.MinValue || (long)top+ys[i]>Int32.MaxValue || (long)top+ys[i]<Int32.MinValue) throw Block("invalid-drag-point");
+    }
+    // EOF also cancels: a vanished host must not leave the button down.
+    var cancelReader=new System.Threading.Thread(delegate() { try { Console.In.ReadLine(); } catch { } CancelDrag("drag-cancelled"); });
+    cancelReader.IsBackground=true; cancelReader.Start();
+    System.Threading.Timer deadline=null;
+    try {
+      DragCheck(handle,pid,title,left,top,width,height,left+xs[0],top+ys[0]);
+      if((GetAsyncKeyState(0x01)&0x8000)!=0) throw Block("physical-button-held");
+      lock(DragLock) {
+        DragCanContinue();
+        if(!SetCursorPos(left+xs[0],top+ys[0])) throw Block("cursor-failed");
+      }
+      DragCheck(handle,pid,title,left,top,width,height,left+xs[0],top+ys[0]);
+      var elapsed=Stopwatch.StartNew();
+      lock(DragLock) {
+        DragCanContinue();
+        // Mark before SendInput: a partial native failure still requires release.
+        DragHeld=true; DragProgress("button-held");
+        INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=2; Emit(new INPUT[]{down});
+        // Independent timer can release even if a UI Automation call stalls.
+        deadline=new System.Threading.Timer(delegate(object unused) { CancelDrag("drag-deadline"); },null,durationMs+250,System.Threading.Timeout.Infinite);
+      }
+      int perSegment=Math.Max(1,(int)Math.Ceiling((double)durationMs/(xs.Length-1)/32.0));
+      int steps=(xs.Length-1)*perSegment;
+      for(int step=1;step<=steps;step++) {
+        long due=(long)durationMs*step/steps;
+        while(elapsed.ElapsedMilliseconds<due) { lock(DragLock) { DragCanContinue(); } System.Threading.Thread.Sleep((int)Math.Max(1,Math.Min(10,due-elapsed.ElapsedMilliseconds))); }
+        int segment=(step-1)/perSegment;
+        double fraction=(double)((step-1)%perSegment+1)/perSegment;
+        int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
+        int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
+        DragCheck(handle,pid,title,left,top,width,height,x,y);
+        lock(DragLock) {
+          DragCanContinue();
+          if(elapsed.ElapsedMilliseconds>durationMs+250) throw Block("drag-deadline");
+          if(!SetCursorPos(x,y)) throw Block("cursor-failed");
+        }
+      }
+      DragCheck(handle,pid,title,left,top,width,height,left+xs[xs.Length-1],top+ys[ys.Length-1]);
+    } finally {
+      if(deadline!=null) deadline.Dispose();
+      lock(DragLock) { ReleaseDragLocked(); }
+    }
+  }
   public static void TypeText(string handle,uint pid,string text) {
     if(String.IsNullOrEmpty(text) || text.Length>4000 || Regex.IsMatch(text,@"[\x00-\x1f\x7f]|(?:javascript|vbscript|data|file|shell|ms-settings|powershell):",RegexOptions.IgnoreCase)) throw Block("invalid-text");
     Check(handle,pid,true); ModifiersReleased();
@@ -284,7 +361,9 @@ try {
   $request = $line | ConvertFrom-Json
   $action = [string]$request.action
   $inputArgs = $request.args
-  if ($action -in @('foreground', 'list_windows')) {
+  if ($action -eq 'release_left') {
+    [BotDeskNative]::ReleaseLeft(); $result = @{ ok = $true }
+  } elseif ($action -in @('foreground', 'list_windows')) {
     if ($action -eq 'foreground') { $result = @{ ok = $true; window = [BotDeskNative]::Foreground() } }
     else { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
   } else {
@@ -298,6 +377,19 @@ try {
       'click' {
         if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-point' }
         [BotDeskNative]::Click($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
+      }
+      'drag' {
+        if (@($inputArgs.PSObject.Properties.Name | Where-Object { $_ -notin @('snapshotId','expectedWindow','geometry','snapshotTitle','points','durationMs') }).Count -gt 0) { throw 'invalid-drag' }
+        if ($inputArgs.snapshotId -isnot [string] -or $inputArgs.snapshotId.Length -lt 1 -or $inputArgs.snapshotId.Length -gt 128 -or $inputArgs.snapshotTitle -isnot [string]) { throw 'invalid-drag' }
+        if ($inputArgs.durationMs -isnot [int] -or $inputArgs.durationMs -lt 100 -or $inputArgs.durationMs -gt 2000 -or $inputArgs.points -isnot [array] -or $inputArgs.points.Count -lt 2 -or $inputArgs.points.Count -gt 64) { throw 'invalid-drag' }
+        foreach ($field in @('x','y','width','height')) { if ($inputArgs.geometry.$field -isnot [int]) { throw 'invalid-geometry' } }
+        $dragXs = New-Object 'System.Collections.Generic.List[int]'; $dragYs = New-Object 'System.Collections.Generic.List[int]'
+        foreach ($point in $inputArgs.points) {
+          if ($null -eq $point -or @($point.PSObject.Properties.Name).Count -ne 2 -or $point.x -isnot [int] -or $point.y -isnot [int] -or @($point.PSObject.Properties.Name | Where-Object { $_ -notin @('x','y') }).Count -gt 0) { throw 'invalid-drag-point' }
+          $dragXs.Add($point.x); $dragYs.Add($point.y)
+        }
+        [BotDeskNative]::Drag($targetHandle,$targetPid,$inputArgs.snapshotTitle,$inputArgs.geometry.x,$inputArgs.geometry.y,$inputArgs.geometry.width,$inputArgs.geometry.height,$dragXs.ToArray(),$dragYs.ToArray(),$inputArgs.durationMs)
+        $result = @{ ok = $true }
       }
       'type' { if ($inputArgs.text -isnot [string]) { throw 'invalid-text' }; [BotDeskNative]::TypeText($targetHandle,$targetPid,$inputArgs.text); $result = @{ ok = $true } }
       'key' { [BotDeskNative]::Press($targetHandle,$targetPid,([string]$inputArgs.key).ToUpperInvariant()); $result = @{ ok = $true } }

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyWindow, validateCommand, DEFAULT_APP_ALLOWLIST } from '../host/guard.mjs';
+import { classifyWindow, validateCommand, DEFAULT_APP_ALLOWLIST, isAllowedWindow } from '../host/guard.mjs';
 const window = Object.freeze({handle:'100',processId:23,processName:'msedge',title:'Example document',integrity:'medium',desktop:'default',automationChecked:true,passwordFocused:false,passwordPresent:false,geometry:{x:-100,y:20,width:1000,height:600}});
 const context = () => ({mode:'armed',now:1000,expiresAt:2000,targetWindow:window,foreground:window});
 
@@ -41,4 +41,29 @@ test('configured allowlist cannot permit shell or code editor processes', () => 
     assert.equal(validateCommand('type',{text:'hello'},{...context(),foreground:candidate,allowedApps:[processName]}).allowed,false);
     assert.equal(DEFAULT_APP_ALLOWLIST.includes(processName),false);
   }
+});
+
+test('Studio is eligible only after opt-in, without weakening sensitive-window checks', () => {
+  const studio = { ...window, processName: 'RobloxStudioBeta', title: 'WorldGame-dev - Roblox Studio' };
+  assert.equal(isAllowedWindow(studio), false);
+  assert.equal(isAllowedWindow(studio, ['robloxstudiobeta']), true);
+  assert.equal(validateCommand('screenshot', {}, { ...context(), foreground: studio, allowedApps: ['robloxstudiobeta'] }).allowed, true);
+  for (const patch of [{ title: 'Sign in - Roblox Studio' }, { passwordPresent: true }, { integrity: 'high' }, { processName: 'unknown' }, { processName: 'code' }]) {
+    const candidate = { ...studio, ...patch };
+    assert.equal(isAllowedWindow(candidate, ['robloxstudiobeta', 'unknown', 'code']), false);
+    assert.equal(validateCommand('screenshot', {}, { ...context(), foreground: candidate, allowedApps: ['robloxstudiobeta', 'unknown', 'code'] }).allowed, false);
+  }
+});
+
+test('drag independently validates every point, exact shape and bounded duration', () => {
+  const args = { snapshotId: 'snapshot-1', points: [{ x: 2, y: 3 }, { x: 999, y: 599 }], durationMs: 500 };
+  assert.equal(validateCommand('drag', args, context()).allowed, true);
+  const bad = [
+    { durationMs: 99 }, { durationMs: 2001 }, { durationMs: 100.5 }, { button: 'right' }, { snapshotId: '' },
+    { points: [{ x: 0, y: 0 }] }, { points: [{ x: 0, y: 0 }, { x: 0, y: 0 }] },
+    { points: [{ x: 0, y: 0 }, { x: 1, y: 600 }] }, { points: [{ x: -1, y: 0 }, { x: 1, y: 1 }] },
+    { points: [{ x: 0.5, y: 0 }, { x: 1, y: 1 }] }, { points: [{ x: 0, y: 0, extra: true }, { x: 1, y: 1 }] },
+    { points: Array.from({ length: 65 }, (_, x) => ({ x, y: 0 })) }
+  ];
+  for (const patch of bad) assert.equal(validateCommand('drag', { ...args, ...patch }, context()).category, 'bad-arguments', JSON.stringify(patch));
 });

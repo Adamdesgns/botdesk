@@ -53,6 +53,51 @@ test('GO LIVE defaults to an eight-hour session and caps requested sessions at t
   assert.equal(s.controller.getStatus().expiresAt, 1000 + 720 * 60_000);
 });
 
+test('a requested thirty-minute session expires and cannot be renewed by input', async (t) => {
+  const s = setup(t); s.controller.selectTarget(target());
+  s.controller.setMode('armed', { minutes: 30, generation: 1 });
+  const expiry = 1000 + 30 * 60_000;
+  assert.equal(s.controller.getStatus().expiresAt, expiry);
+  await s.capture(); assert.equal(s.controller.getStatus().expiresAt, expiry);
+  s.advance(30 * 60_000);
+  assert.equal(s.controller.getStatus().mode, 'off');
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).ok, false);
+});
+
+test('drag consumes one fresh snapshot and passes its exact title and geometry to native checks', async (t) => {
+  const s = setup(t); s.arm();
+  const args = { snapshotId: 'missing', points: [{ x: 1, y: 1 }, { x: 20, y: 20 }], durationMs: 500 };
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'fresh-snapshot-required');
+  args.snapshotId = await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).ok, true);
+  assert.equal(s.calls.at(-1).args.snapshotTitle, target().title);
+  assert.deepEqual(s.calls.at(-1).args.geometry, target().geometry);
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'fresh-snapshot-required');
+  args.snapshotId = await s.capture(); s.changeWindow({ title: 'Other page' });
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'window-moved-retake-snapshot');
+});
+
+test('STOP during drag waits for executor cleanup and latches any unconfirmed mouse release', async (t) => {
+  for (const error of ['windows-drag-release-unconfirmed', 'windows-drag-stop-unconfirmed']) {
+    const s = setup(t); s.arm(); const snapshotId = await s.capture();
+    const started = deferred(), cleanup = deferred(); let signal;
+    s.executor.run = async (_, __, options) => { signal = options.signal; started.resolve(); return cleanup.promise; };
+    const result = s.controller.runCommand(s.command('drag', { snapshotId, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }], durationMs: 500 }));
+    await started.promise; s.controller.emergencyStop();
+    assert.equal(signal.aborted, true);
+    assert.ok(s.controller.operation, 'operation must remain busy while native cleanup is pending');
+    let idle = false; const settled = s.controller.whenIdle().then(() => { idle = true; });
+    await Promise.resolve(); assert.equal(idle, false, 'quit must wait for drag cleanup');
+    cleanup.resolve({ ok: false, error });
+    assert.equal((await result).error, error);
+    await settled; assert.equal(idle, true);
+    assert.equal(s.controller.getStatus().mode, 'off');
+    assert.equal(s.controller.getStatus().inputSafetyFault, error);
+    assert.throws(() => s.controller.clearLocalStop(), new RegExp(error));
+    assert.throws(() => s.controller.setMode('armed'), new RegExp(error));
+  }
+});
+
 test('commands without valid deadline, generation and replay ID fail before target access', async (t) => {
   const s = setup(t); s.arm();
   let foregroundCalls = 0;
