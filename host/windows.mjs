@@ -6,6 +6,35 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const helperPath = path.resolve(moduleDir, '../scripts/windows-helper.ps1').replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 const MAX_OUTPUT_BYTES = 24 * 1024 * 1024;
 const ACTIONS = new Set(['foreground', 'list_windows', 'focus', 'capture', 'snapshot', 'click', 'drag', 'type', 'key', 'scroll']);
+const DRAG_TIMING_PREFIX = 'BOTDESK_DRAG_TIMING ';
+const DRAG_TIMING_FIELDS = ['phase', 'checkCount', 'moveCount', 'elapsedMs', 'costMs', 'targetMs', 'pointMs', 'completed'];
+// Exported only for an inert transport fixture. No native stderr is forwarded
+// unless the owner opted in; exact numeric fields are rebuilt before emitting.
+export function createDragTimingForwarder(emit = entry => process.stderr.write(`${DRAG_TIMING_PREFIX}${JSON.stringify(entry)}\n`)) {
+  const enabled = process.env.BOTDESK_DRAG_TIMING === '1';
+  let pending = '', bytes = 0, lines = 0;
+  return chunk => {
+    if (!enabled || lines >= 256 || bytes > 65536) return;
+    bytes += Buffer.byteLength(chunk);
+    if (bytes > 65536) { pending = ''; return; }
+    pending += chunk;
+    for (;;) {
+      const end = pending.indexOf('\n');
+      if (end < 0) break;
+      const line = pending.slice(0, end).replace(/\r$/, ''); pending = pending.slice(end + 1);
+      if (!line.startsWith(DRAG_TIMING_PREFIX) || line.length > 1024) continue;
+      try {
+        const value = JSON.parse(line.slice(DRAG_TIMING_PREFIX.length));
+        if (!value || Array.isArray(value) || Object.keys(value).length !== DRAG_TIMING_FIELDS.length ||
+          !DRAG_TIMING_FIELDS.every(field => Number.isSafeInteger(value[field]) && value[field] >= 0 && value[field] <= 60000) ||
+          ![1, 2, 3, 4, 5, 7].includes(value.phase) || value.checkCount > 256 || value.moveCount > 256 || value.completed > 1) continue;
+        if (++lines > 256) return;
+        emit(Object.fromEntries(DRAG_TIMING_FIELDS.map(field => [field, value[field]])));
+      } catch { /* Never expose foreign stderr or malformed diagnostic text. */ }
+    }
+    if (pending.length > 1024) pending = '';
+  };
+}
 function powershellPath() {
   return path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
@@ -110,7 +139,7 @@ function runDragHelper(args, { timeoutMs, signal, spawnImpl }) {
       pending += chunk;
       for (;;) { const index = pending.indexOf('\n'); if (index < 0) break; consume(pending.slice(0, index)); pending = pending.slice(index + 1); }
     });
-    child.stderr.on('data', () => {});
+    child.stderr.on('data', createDragTimingForwarder());
     child.stdin.on('error', () => stop('windows-helper-input-failed'));
     child.on('error', () => stop('windows-helper-start-failed'));
     child.on('close', async (code) => {

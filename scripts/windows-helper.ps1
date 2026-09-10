@@ -247,6 +247,17 @@ public static class BotDeskNative {
   static readonly object DragLock=new object();
   static bool DragHeld=false, DragCancelled=false;
   static string DragCancelReason="drag-cancelled";
+  static readonly bool DragTimingEnabled=Environment.GetEnvironmentVariable("BOTDESK_DRAG_TIMING")=="1";
+  static Stopwatch DragTimingClock;
+  static int DragTimingChecks=0,DragTimingMoves=0,DragTimingLines=0;
+  // Opt-in diagnostics contain only fixed numeric measurements, never target,
+  // coordinates, path, text, tokens, or native exception strings. Bound output.
+  static void DragTiming(int phase,long costMs,long targetMs,long pointMs,int completed) {
+    if(!DragTimingEnabled || System.Threading.Interlocked.Increment(ref DragTimingLines)>256) return;
+    try {
+      Console.Error.WriteLine("BOTDESK_DRAG_TIMING {\"phase\":"+phase+",\"checkCount\":"+DragTimingChecks+",\"moveCount\":"+DragTimingMoves+",\"elapsedMs\":"+(DragTimingClock==null?0:DragTimingClock.ElapsedMilliseconds)+",\"costMs\":"+costMs+",\"targetMs\":"+targetMs+",\"pointMs\":"+pointMs+",\"completed\":"+completed+"}");
+    } catch { /* Diagnostic failure must not affect input cleanup. */ }
+  }
   static void DragProgress(string state) { Console.Out.WriteLine("{\"dragProgress\":\""+state+"\"}"); Console.Out.Flush(); }
   static void ReleaseDragLocked() {
     if(!DragHeld) return;
@@ -261,16 +272,27 @@ public static class BotDeskNative {
       DragCancelled=true; DragCancelReason=reason;
       try { ReleaseDragLocked(); } catch { /* finally/parent cleanup retries */ }
     }
+    DragTiming(reason=="drag-deadline"?4:7,0,0,0,DragHeld?0:1);
   }
   static void DragCanContinue() { if(DragCancelled) throw Block(DragCancelReason); }
   static void DragCheck(string handle,uint pid,string title,int left,int top,int width,int height,int x,int y) {
-    lock(DragLock) { DragCanContinue(); }
-    IntPtr hwnd=Check(handle,pid,true); RECT rect;
-    if(!GetWindowRect(hwnd,out rect) || rect.Left!=left || rect.Top!=top || rect.Right-rect.Left!=width || rect.Bottom-rect.Top!=height) throw Block("target-moved-during-drag");
-    var currentTitle=new StringBuilder(1024); GetWindowText(hwnd,currentTitle,currentTitle.Capacity);
-    if(!String.Equals(currentTitle.ToString(),title,StringComparison.Ordinal)) throw Block("target-title-changed");
-    PointCheck(hwnd,pid,x,y); ModifiersReleased();
-    lock(DragLock) { DragCanContinue(); }
+    var timing=DragTimingEnabled?Stopwatch.StartNew():null;
+    long targetMs=0,pointMs=0; int completed=0;
+    if(DragTimingEnabled) System.Threading.Interlocked.Increment(ref DragTimingChecks);
+    try {
+      lock(DragLock) { DragCanContinue(); }
+      IntPtr hwnd; var part=DragTimingEnabled?Stopwatch.StartNew():null;
+      try { hwnd=Check(handle,pid,true); } finally { if(part!=null) targetMs=part.ElapsedMilliseconds; }
+      RECT rect;
+      if(!GetWindowRect(hwnd,out rect) || rect.Left!=left || rect.Top!=top || rect.Right-rect.Left!=width || rect.Bottom-rect.Top!=height) throw Block("target-moved-during-drag");
+      var currentTitle=new StringBuilder(1024); GetWindowText(hwnd,currentTitle,currentTitle.Capacity);
+      if(!String.Equals(currentTitle.ToString(),title,StringComparison.Ordinal)) throw Block("target-title-changed");
+      if(part!=null) part.Restart();
+      try { PointCheck(hwnd,pid,x,y); } finally { if(part!=null) pointMs=part.ElapsedMilliseconds; }
+      ModifiersReleased();
+      lock(DragLock) { DragCanContinue(); }
+      completed=1;
+    } finally { if(timing!=null) DragTiming(1,timing.ElapsedMilliseconds,targetMs,pointMs,completed); }
   }
   // UI Automation checks can take longer than one 32ms interpolation interval.
   // Budget that observed cost before the next move and discard only overdue
@@ -282,8 +304,12 @@ public static class BotDeskNative {
     for(int step=1;step<=steps;step++) {
       canContinue();
       int waypoint=((step-1)/perSegment+1)*perSegment;
+      long waypointDue=(long)durationMs*waypoint/steps;
       long projected=(long)Math.Ceiling((double)(elapsed()+checkBudgetMs)*steps/durationMs);
-      step=(int)Math.Min(waypoint,Math.Max((long)step,projected));
+      // An interpolated move requires its own check AND the upcoming waypoint's
+      // check. Reserve both; otherwise a near-end sample consumes the final
+      // waypoint's budget even when its full check is already known to be slow.
+      step=waypointDue-elapsed()<=2*checkBudgetMs?waypoint:(int)Math.Min(waypoint,Math.Max((long)step,projected));
       long due=(long)durationMs*step/steps;
       long begin=Math.Max(0,due-checkBudgetMs);
       while(elapsed()<begin) {
@@ -307,6 +333,7 @@ public static class BotDeskNative {
     canContinue();
   }
   public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
+    if(DragTimingEnabled) DragTimingClock=Stopwatch.StartNew();
     if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
     for(int i=0;i<xs.Length;i++) {
       if(xs[i]<0 || ys[i]<0 || xs[i]>=width || ys[i]>=height || xs[i]>32767 || ys[i]>32767 || (i>0 && xs[i]==xs[i-1] && ys[i]==ys[i-1])) throw Block("invalid-drag-point");
@@ -335,6 +362,7 @@ public static class BotDeskNative {
         // Independent timer can release even if a UI Automation call stalls.
         deadline=new System.Threading.Timer(delegate(object unused) { CancelDrag("drag-deadline"); },null,durationMs+250,System.Threading.Timeout.Infinite);
       }
+      DragTiming(2,0,0,0,1);
       RunDragSchedule(xs.Length-1,durationMs,checkCost.ElapsedMilliseconds,
         delegate() { return elapsed.ElapsedMilliseconds; },
         delegate(int ms) { System.Threading.Thread.Sleep(ms); },
@@ -351,6 +379,8 @@ public static class BotDeskNative {
             if(elapsed.ElapsedMilliseconds>durationMs+250) throw Block("drag-deadline");
             if(!SetCursorPos(x,y)) throw Block("cursor-failed");
           }
+          if(DragTimingEnabled) System.Threading.Interlocked.Increment(ref DragTimingMoves);
+          DragTiming(3,0,0,0,1);
         },
         delegate() { lock(DragLock) { DragCanContinue(); } });
       // The final waypoint was fully checked before its move and the requested
@@ -359,6 +389,7 @@ public static class BotDeskNative {
     } finally {
       if(deadline!=null) deadline.Dispose();
       lock(DragLock) { ReleaseDragLocked(); }
+      DragTiming(5,0,0,0,DragHeld?0:1);
     }
   }
   public static void TypeText(string handle,uint pid,string text) {
