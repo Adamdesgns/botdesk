@@ -272,6 +272,40 @@ public static class BotDeskNative {
     PointCheck(hwnd,pid,x,y); ModifiersReleased();
     lock(DragLock) { DragCanContinue(); }
   }
+  // UI Automation checks can take longer than one 32ms interpolation interval.
+  // Budget that observed cost before the next move and discard only overdue
+  // interpolated samples; every caller-supplied waypoint still gets checked.
+  static void RunDragSchedule(int segments,int durationMs,long checkBudgetMs,Func<long> elapsed,Action<int> wait,Action<int,double> check,Action<int,double> move,Action canContinue) {
+    int perSegment=Math.Max(1,(int)Math.Ceiling((double)durationMs/segments/32.0));
+    int steps=segments*perSegment;
+    checkBudgetMs=Math.Max(1,checkBudgetMs);
+    for(int step=1;step<=steps;step++) {
+      canContinue();
+      int waypoint=((step-1)/perSegment+1)*perSegment;
+      long projected=(long)Math.Ceiling((double)(elapsed()+checkBudgetMs)*steps/durationMs);
+      step=(int)Math.Min(waypoint,Math.Max((long)step,projected));
+      long due=(long)durationMs*step/steps;
+      long begin=Math.Max(0,due-checkBudgetMs);
+      while(elapsed()<begin) {
+        canContinue();
+        wait((int)Math.Max(1,Math.Min(10,begin-elapsed())));
+      }
+      int segment=(step-1)/perSegment;
+      double fraction=(double)((step-1)%perSegment+1)/perSegment;
+      long started=elapsed();
+      check(segment,fraction);
+      canContinue();
+      move(segment,fraction);
+      checkBudgetMs=Math.Max(checkBudgetMs,elapsed()-started);
+    }
+    // A conservative latency estimate may reach the endpoint early. Preserve
+    // the requested hold duration without extra moves or another full UIA pass.
+    while(elapsed()<durationMs) {
+      canContinue();
+      wait((int)Math.Max(1,Math.Min(10,durationMs-elapsed())));
+    }
+    canContinue();
+  }
   public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
     if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
     for(int i=0;i<xs.Length;i++) {
@@ -289,7 +323,9 @@ public static class BotDeskNative {
         DragCanContinue();
         if(!SetCursorPos(left+xs[0],top+ys[0])) throw Block("cursor-failed");
       }
+      var checkCost=Stopwatch.StartNew();
       DragCheck(handle,pid,title,left,top,width,height,left+xs[0],top+ys[0]);
+      checkCost.Stop();
       var elapsed=Stopwatch.StartNew();
       lock(DragLock) {
         DragCanContinue();
@@ -299,23 +335,27 @@ public static class BotDeskNative {
         // Independent timer can release even if a UI Automation call stalls.
         deadline=new System.Threading.Timer(delegate(object unused) { CancelDrag("drag-deadline"); },null,durationMs+250,System.Threading.Timeout.Infinite);
       }
-      int perSegment=Math.Max(1,(int)Math.Ceiling((double)durationMs/(xs.Length-1)/32.0));
-      int steps=(xs.Length-1)*perSegment;
-      for(int step=1;step<=steps;step++) {
-        long due=(long)durationMs*step/steps;
-        while(elapsed.ElapsedMilliseconds<due) { lock(DragLock) { DragCanContinue(); } System.Threading.Thread.Sleep((int)Math.Max(1,Math.Min(10,due-elapsed.ElapsedMilliseconds))); }
-        int segment=(step-1)/perSegment;
-        double fraction=(double)((step-1)%perSegment+1)/perSegment;
-        int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
-        int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
-        DragCheck(handle,pid,title,left,top,width,height,x,y);
-        lock(DragLock) {
-          DragCanContinue();
-          if(elapsed.ElapsedMilliseconds>durationMs+250) throw Block("drag-deadline");
-          if(!SetCursorPos(x,y)) throw Block("cursor-failed");
-        }
-      }
-      DragCheck(handle,pid,title,left,top,width,height,left+xs[xs.Length-1],top+ys[ys.Length-1]);
+      RunDragSchedule(xs.Length-1,durationMs,checkCost.ElapsedMilliseconds,
+        delegate() { return elapsed.ElapsedMilliseconds; },
+        delegate(int ms) { System.Threading.Thread.Sleep(ms); },
+        delegate(int segment,double fraction) {
+          int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
+          int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
+          DragCheck(handle,pid,title,left,top,width,height,x,y);
+        },
+        delegate(int segment,double fraction) {
+          int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
+          int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
+          lock(DragLock) {
+            DragCanContinue();
+            if(elapsed.ElapsedMilliseconds>durationMs+250) throw Block("drag-deadline");
+            if(!SetCursorPos(x,y)) throw Block("cursor-failed");
+          }
+        },
+        delegate() { lock(DragLock) { DragCanContinue(); } });
+      // The final waypoint was fully checked before its move and the requested
+      // hold duration has elapsed. Release without another full UIA pass that
+      // would spend the independent release margin.
     } finally {
       if(deadline!=null) deadline.Dispose();
       lock(DragLock) { ReleaseDragLocked(); }

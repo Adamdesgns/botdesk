@@ -33,7 +33,12 @@ One input consumes its snapshot. The host retains the 15-second snapshot limit,
 exact window identity, title and geometry checks, foreground ownership checks,
 and sensitive-control exclusions. Drag repeats checks while moving. Cancellation
 releases the button, with an independent native deadline of requested duration
-plus 250 ms (subject to Windows scheduling). Dense paths can exceed that bound
+plus 250 ms (subject to Windows scheduling). The scheduler accounts for observed
+window-check time and skips overdue interpolated samples while preserving every
+supplied waypoint. If the checked final move finishes early, it holds until the
+requested end time with cancellation checks at most 10ms apart, then releases
+without another move or full UI Automation pass. Dense
+paths can exceed that bound
 and abort; that is a failure to investigate, not evidence of a completed route.
 
 If helper exit or release cannot be confirmed, access locks OFF. Local unlock and
