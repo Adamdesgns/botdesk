@@ -1,10 +1,10 @@
 # BotDesk Free
 
-A free Windows companion for Grok bot owners using a compatible tool runner.
+A free Windows companion for BotDOOR / Grok bot owners using a compatible tool runner.
 
 Let approved bots operate one selected app window on your Windows PC while you are away. Use your private phone dashboard to go live now, set a countdown, schedule a dated window such as **6 AM to 6 PM**, pause access, or turn it off.
 
-**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
+**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), [security boundaries](docs/SECURITY.md), and the [overnight push plan](docs/OVERNIGHT-PUSH-PLAN.md).
 
 ## Owner controls
 
@@ -17,9 +17,9 @@ Let approved bots operate one selected app window on your Windows PC while you a
 
 ## Bot tools
 
-BotDesk is independent software, not an official xAI product. It does not sign into Grok or add tools to the standard Grok chat. Your bot runner must be able to launch the included MCP adapter.
+BotDesk is independent software, not an official xAI product. It does not sign into Grok or add tools to the standard Grok chat. Your bot runner must be able to launch the included MCP adapter over **SDK stdio** (`node mcp/server.mjs` plus env). Grok dynamic MCP is unsupported here and often shows Not connected; that is a runner issue, not a missing BotDesk HTTP server.
 
-The MCP adapter exposes eleven tools: status, screenshot, accessible-page snapshot, target-window information, click, type, limited key presses, scroll, recording start/stop, and stop all. MCP is the standard interface that lets a bot call these tools. Only one bot can operate the selected window at a time.
+The MCP adapter exposes eleven tools: status, screenshot, accessible-page snapshot, target-window information, click, type, limited key presses, scroll, recording start/stop, and stop all. There is no bot tool to focus or activate the approved window after another app steals it. Only one bot can operate the selected window at a time.
 
 Input needs a fresh screenshot or snapshot. The host checks the target, process, Windows permissions, sensitive content signals, session deadline and command identity before acting. Screenshots capture only the selected window. Local WebM recordings use guarded snapshots at roughly one frame per second, without audio; they are suitable for test evidence, not smooth promotional footage.
 

@@ -41,4 +41,6 @@ Use a normal user execution environment for GUI verification. A restricted sandb
 3. Verify a real phone from another network: schedule, STOP, disconnect/reconnect and expiry with the phone page closed.
 4. Verify installation and behavior on a clean Windows account/device. The local portable build is unsigned.
 
+See [OVERNIGHT-PUSH-PLAN.md](OVERNIGHT-PUSH-PLAN.md) for the 2026-09-11 code survey of live fleet gaps (no approved-window activate tool, phone touch vs mouse-wheel scroll, host bot-token wipe on empty save, Grok dynamic MCP). That survey did not deploy the relay or claim a Grok Studio run.
+
 Do not treat local tests as proof of unattended production readiness.
