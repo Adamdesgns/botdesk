@@ -41,6 +41,7 @@ byId('importPairing').onclick=()=>{
 };
 byId('saveButton').onclick=async()=>{
   const config=Object.fromEntries(fields.map(id=>[id,byId(id).value.trim()]));
+  for(const key of ['hostToken','ownerToken','botToken'])if(!config[key])delete config[key];
   Object.assign(config,{allowRemoteArm:byId('remoteArm').checked,startAtLogin:byId('startAtLogin').checked,allowedApps:byId('allowedApps').value.split(',').map(s=>s.trim()).filter(Boolean)});
   if(await action(()=>window.botdesk.saveConfig(config))){notice('Settings saved with Windows encryption.');await load();}
 };

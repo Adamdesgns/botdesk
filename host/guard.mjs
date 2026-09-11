@@ -31,6 +31,13 @@ export function validateCommand(name, args = {}, context = {}) {
   const target = context.targetWindow;
   const foreground = context.foreground || {};
   if (!target?.handle || !Number.isInteger(target.processId)) return reject('target-required', 'Choose a target window on the PC first.');
+  if (name === 'focus') {
+    const verdict = classifyWindow(target);
+    if (!verdict.allowed) return verdict;
+    const app = normalizeApp(target.processName);
+    if (!(context.allowedApps || DEFAULT_APP_ALLOWLIST).map(normalizeApp).includes(app)) return reject('app-blocked', 'The approved app is not on the local allowlist.');
+    return { allowed: true };
+  }
   if (String(target.handle) !== String(foreground.handle) || target.processId !== foreground.processId) return reject('target-changed', 'The approved window must remain in the foreground.');
   const verdict = classifyWindow(foreground);
   if (!verdict.allowed) return verdict;

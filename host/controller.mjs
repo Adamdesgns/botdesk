@@ -103,7 +103,30 @@ export class HostController extends EventEmitter {
       if(botId!=='owner-preview'){this.activeBot=botId;this.leaseEndsAt=this.clock()+60000;}
       this.mode='running';this.emitStatus();
       let result;const nativeArgs={...args,expectedWindow:this.targetWindow,geometry:snapshot?.window.geometry};
-      if(name==='record_start') {
+      if(name==='focus') {
+        const focused=this.executor.focus
+          ? await this.executor.focus(this.targetWindow,{signal:operation.signal})
+          : await this.executor.run(name,nativeArgs,{signal:operation.signal});
+        if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
+        if(!focused.ok){
+          const refused=focused.error==='focus-refused'||focused.error==='target-not-foreground';
+          this.auditLog.write({botId,command:name,outcome:focused.error||'focus-refused',app:this.targetWindow.processName});
+          return fail(refused?'focus-refused':focused.error||'focus-refused', refused?'Windows refused to foreground the approved window.':focused.message);
+        }
+        const restored=await this.executor.foreground({signal:operation.signal});
+        if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
+        if(String(this.targetWindow.handle)!==String(restored.handle)||this.targetWindow.processId!==restored.processId){
+          this.auditLog.write({botId,command:name,outcome:'target-changed',app:this.targetWindow.processName});
+          return fail('target-changed','The approved window could not be restored to the foreground.');
+        }
+        const post=validateCommand('screenshot',{},{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),foreground:restored,
+          targetWindow:this.targetWindow,allowedApps:this.configStore.load().allowedApps});
+        if(!post.allowed){
+          this.auditLog.write({botId,command:name,outcome:post.category,app:restored.processName});
+          return fail(post.category,post.reason);
+        }
+        result={ok:true,focused:true,window:restored};
+      } else if(name==='record_start') {
         if(this.recording)return fail('already-recording');
         const abort=new AbortController();this.recordAbort=abort;
         operation.signal.addEventListener('abort',()=>abort.abort(),{once:true});

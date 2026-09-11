@@ -13,6 +13,17 @@ function fixture() {
   let options,command,argv;
   return {child,spawnImpl:(cmd,args,opts)=>{command=cmd;argv=args;options=opts;return child;},details:()=>({options,command,argv})};
 }
+test('focus asks only for the supplied HWND/PID and never enumerates replacements', async () => {
+  const f=fixture(); let input=''; f.child.stdin.on('data',chunk=>{input+=chunk;});
+  const result=runWindowsAction('focus',{expectedWindow:{handle:'1001',processId:123}},{spawnImpl:f.spawnImpl});
+  f.child.stdout.end('{"ok":false,"error":"focus-refused"}'); f.child.emit('close',0);
+  assert.deepEqual(await result,{ok:false,error:'focus-refused'});
+  const request=JSON.parse(input);
+  assert.equal(request.action,'focus');
+  assert.deepEqual(request.args.expectedWindow,{handle:'1001',processId:123});
+  assert.equal(Object.hasOwn(request.args,'handle'),false);
+});
+
 test('passes JSON over stdin, never evaluates input as shell text', async () => {
   const f=fixture(); let input=''; f.child.stdin.on('data',chunk=>{input+=chunk;});
   const result=runWindowsAction('type',{text:'$(danger); & shell',expectedWindow:{handle:'100',processId:23}},{spawnImpl:f.spawnImpl});

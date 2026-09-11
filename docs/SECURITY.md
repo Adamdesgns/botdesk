@@ -15,7 +15,7 @@ A start/end window is stored only after an authenticated owner request. Restarti
 - One authenticated host connection, one active bot lease and one command in flight. Inputs are not queued.
 - Fresh request IDs, deadlines and session generations reject replay and late results.
 - Input uses a short-lived, single-use snapshot tied to the bot, target window, process, position, dimensions and title.
-- Every action requires the selected foreground window and a fixed allowed app: Edge, Chrome, Firefox or Notepad. Shells, editors and BotDesk itself are excluded.
+- Every action requires the selected foreground window and a fixed allowed app: Edge, Chrome, Firefox or Notepad. Shells, editors and BotDesk itself are excluded. `focus` may restore only that stored HWND/PID; it re-runs integrity, sensitive-title, password and allowlist checks and never chooses another window.
 - Windows integrity level, active desktop, password controls and sensitive titles are checked. Unknown evidence is rejected. Password-focused or elevated windows are rejected.
 - Native capture uses only the selected window. It has no full-desktop fallback. Guarded recording repeats the capture checks for each frame.
 - Keyboard and text operations are bounded. Clipboard shortcuts, shell/developer shortcuts and executable URI text are blocked.

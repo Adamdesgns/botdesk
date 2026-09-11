@@ -145,6 +145,46 @@ test('moving the target or changing its page title invalidates the captured coor
   assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: next, x: 20, y: 30 }))).error, 'window-moved-retake-snapshot');
 });
 
+test('focus restores only the approved HWND/PID after another window steals foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'target-changed');
+  s.executor.run = async (name, args, options) => {
+    s.calls.push({ name, args, options });
+    if (name === 'focus') {
+      assert.equal(args.expectedWindow.handle, '1001');
+      assert.equal(args.expectedWindow.processId, 123);
+      s.changeWindow(target());
+      return { ok: true, window: target() };
+    }
+    return { ok: true, window: target() };
+  };
+  const focused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(focused.ok, true, JSON.stringify(focused));
+  assert.equal(focused.result.focused, true);
+  assert.equal(focused.result.window.handle, '1001');
+  assert.equal(s.calls.at(-1).name, 'focus');
+  assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
+  const snapshotId = await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId, x: 1, y: 1 }))).ok, true);
+});
+
+test('focus fails closed with a clear error when Windows refuses to steal foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.run = async (name, args) => {
+    s.calls.push({ name, args });
+    if (name === 'focus') return { ok: false, error: 'focus-refused' };
+    return { ok: true, window: target() };
+  };
+  const refused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, 'focus-refused');
+  assert.match(refused.message, /Windows refused to foreground the approved window/);
+  assert.equal(s.calls.every((call) => call.name === 'focus' || call.args?.expectedWindow?.handle === '1001'), true);
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'target-changed');
+});
+
 test('approved target and password detection remain guards even with a fresh snapshot', async (t) => {
   const s = setup(t); s.arm(); const snapshotId = await s.capture();
   s.changeWindow({ handle: '2002' });

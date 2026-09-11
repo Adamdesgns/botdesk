@@ -7,7 +7,7 @@
   "main": "host/main.mjs",
   "scripts": {
     "start": "electron .",
-    "test": "node --test test/*.test.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
     "check": "npm run test && npm run relay:types && npm run mcp:smoke",
     "relay:types": "wrangler types --config relay/wrangler.jsonc && tsc -p relay/tsconfig.json --noEmit",
     "relay:dev": "wrangler dev --config relay/wrangler.jsonc",
