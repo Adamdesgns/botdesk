@@ -35,6 +35,16 @@ test('rejects clipboard, shell and devtools shortcuts; blocks control characters
   for (const text of ['', 'x'.repeat(4001),'first\nsecond','one\ttwo','javascript:alert(1)','file:///C:/secret','ms-settings:privacy']) assert.equal(validateCommand('type',{text},context()).category,'bad-arguments');
   assert.equal(validateCommand('type',{text:'Hello, world — 123'},context()).allowed,true);
 });
+test('focus may restore the approved target when another window is foreground', () => {
+  const other = { ...window, handle: '200', processId: 99, processName: 'chrome', title: 'Unrelated tab' };
+  assert.equal(validateCommand('focus', {}, { ...context(), foreground: other }).allowed, true);
+  assert.equal(validateCommand('focus', {}, { ...context(), mode: 'off', foreground: other }).category, 'not-armed');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: null, foreground: other }).category, 'target-required');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, title: 'Sign in to account' }, foreground: other }).category, 'credential');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, processName: 'firefox' }, foreground: other, allowedApps: ['msedge'] }).category, 'app-blocked');
+  assert.equal(validateCommand('click', { x: 1, y: 2 }, { ...context(), foreground: other }).category, 'target-changed');
+});
+
 test('configured allowlist cannot permit shell or code editor processes', () => {
   for (const processName of ['powershell','pwsh','cmd','code','explorer','regedit']) {
     const candidate={...window,processName};

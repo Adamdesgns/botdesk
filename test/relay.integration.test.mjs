@@ -189,6 +189,12 @@ test('disconnect cancels pending work; a saved owner timer resumes only after a 
   await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.mode === 'armed');
 });
 
+test('bot focus is a valid command; owner preview cannot restore foreground', async () => {
+  const c = await provision();
+  assert.equal((await command(c, 'focus')).body.error, 'host-offline');
+  assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'focus', args: {} })).body.error, 'owner-command-blocked');
+});
+
 test('invalid bodies, request IDs, query credentials, origin, and unknown commands fail closed', async () => {
   const c = await provision();
   assert.equal((await command(c, 'unknown')).status, 400);

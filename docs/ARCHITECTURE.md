@@ -39,6 +39,7 @@ Every start, including a reconnect, uses the same automatic host acknowledgement
 2. The host verifies remote arming is enabled, the emergency-stop latch is clear, and an approved target exists. It attempts to focus that target and applies its local checks without prompting a person.
 3. The host replies `owner_state_result`. The relay accepts only the matching request, generation, mode, and expiry.
 4. Only a successful matching acknowledgement permits commands. A rejected or timed-out request does not create a live session.
+5. After arm, a bot may call `focus` to restore that same in-memory HWND/PID if another window took the foreground. The host never enumerates or selects a replacement window. If Windows refuses `SetForegroundWindow`, the command fails closed.
 
 The local session deadline and relay deadline independently stop access. The owner phone reports `schedule`, `schedulePending`, `liveEndsAt`, and `scheduleError`, plus a live/start countdown. A saved window can be pending while the PC is offline; saving it is not a claim that the PC is live.
 

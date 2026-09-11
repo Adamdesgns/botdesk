@@ -287,6 +287,8 @@ try {
   }
   $result | ConvertTo-Json -Compress -Depth 12
 } catch {
-  # Error details from UI Automation can include sensitive content. Keep the transport error generic.
-  @{ ok = $false; error = 'native-action-blocked' } | ConvertTo-Json -Compress
+  # UI Automation exceptions can include window text. Only pass through known, constant Block() codes.
+  $reason = try { [string]$_.Exception.GetBaseException().Message } catch { '' }
+  if ($reason -cnotin @('focus-refused', 'target-not-foreground')) { $reason = 'native-action-blocked' }
+  @{ ok = $false; error = $reason } | ConvertTo-Json -Compress
 }

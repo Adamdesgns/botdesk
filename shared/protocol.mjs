@@ -10,6 +10,7 @@ export const COMMANDS = Object.freeze([
   'screenshot',
   'snapshot',
   'list_windows',
+  'focus',
   'click',
   'type',
   'key',

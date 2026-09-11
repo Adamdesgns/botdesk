@@ -73,7 +73,7 @@ The provisioning secret is separate from all three. Keep the complete pairing fi
 
 ## Prepare the PC once before leaving
 
-1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect.
+1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect. Leaving a token field blank keeps the last saved secret instead of wiping it.
 2. Open the app the bot should use. In BotDesk, choose **REFRESH WINDOWS** and select that app under **APPROVED WINDOW**. The default allowed apps are Edge, Chrome, Firefox, and Notepad.
 3. Enable **Allow remote arming while BotDesk is running** and save. Local **GO LIVE — 8 HOURS** also enables remote arming. The host checks the selected window when access starts and attempts to bring it forward.
 4. Use **COPY PHONE LINK** and save the private link for yourself. It contains the owner credential after `#`.
@@ -87,7 +87,7 @@ BotDesk cannot wake a powered-off PC, bypass the lock screen, approve UAC, or re
 
 ## Connect the approved bot
 
-MCP is the tool connection that lets an AI agent request screenshots and actions. Register `node` with `mcp/server.mjs` in the bot application's MCP configuration. For example, replace the example path with your local clone:
+The supported bot path is a local stdio MCP process using the official SDK (`mcp/server.mjs`). Dynamic MCP / remote tool discovery is not supported. Register `node` with `mcp/server.mjs` in the bot application's MCP configuration. For example, replace the example path with your local clone:
 
 ```json
 {
@@ -105,7 +105,7 @@ MCP is the tool connection that lets an AI agent request screenshots and actions
 }
 ```
 
-The adapter gives each process a distinct bot ID by default. `BOTDESK_BOT_ID` can set an explicit ID if needed. One bot holds the control lease at a time. The bot must take a fresh snapshot before input; click coordinates are relative to the selected-window capture. Commands are rejected rather than queued when the host is busy.
+The adapter gives each process a distinct bot ID by default. `BOTDESK_BOT_ID` can set an explicit ID if needed. One bot holds the control lease at a time. The bot must take a fresh snapshot before input; click coordinates are relative to the selected-window capture. Commands are rejected rather than queued when the host is busy. If another window steals the foreground after arm, call `botdesk_focus` to restore only the approved HWND/PID, then capture again. Windows may refuse `SetForegroundWindow`; that returns `focus-refused` and does not select a different window.
 
 ## Use the phone while away
 
