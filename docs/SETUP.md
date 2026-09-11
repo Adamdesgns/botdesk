@@ -73,7 +73,7 @@ The provisioning secret is separate from all three. Keep the complete pairing fi
 
 ## Prepare the PC once before leaving
 
-1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect.
+1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect. Leave a stored bot-token field showing `saved` unless you are pasting a new token. Saving an empty bot-token box can wipe a previously stored value. Give the live bot token to the MCP runner environment, not to Grok dynamic MCP.
 2. Open the app the bot should use. In BotDesk, choose **REFRESH WINDOWS** and select that app under **APPROVED WINDOW**. The default allowed apps are Edge, Chrome, Firefox, and Notepad.
 3. Enable **Allow remote arming while BotDesk is running** and save. Local **GO LIVE — 8 HOURS** also enables remote arming. The host checks the selected window when access starts and attempts to bring it forward.
 4. Use **COPY PHONE LINK** and save the private link for yourself. It contains the owner credential after `#`.
@@ -87,7 +87,7 @@ BotDesk cannot wake a powered-off PC, bypass the lock screen, approve UAC, or re
 
 ## Connect the approved bot
 
-MCP is the tool connection that lets an AI agent request screenshots and actions. Register `node` with `mcp/server.mjs` in the bot application's MCP configuration. For example, replace the example path with your local clone:
+MCP is the tool connection that lets an AI agent request screenshots and actions. The supported path is the official MCP SDK over **stdio**: register `node` with `mcp/server.mjs`. Grok's dynamic / remote MCP connector is not supported and often stays **Not connected**; do not add a second BotDesk transport to chase that UI. For example, replace the example path with your local clone:
 
 ```json
 {
