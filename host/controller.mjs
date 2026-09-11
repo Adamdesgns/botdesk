@@ -104,14 +104,12 @@ export class HostController extends EventEmitter {
       this.mode='running';this.emitStatus();
       let result;const nativeArgs={...args,expectedWindow:this.targetWindow,geometry:snapshot?.window.geometry};
       if(name==='focus') {
-        const focused=this.executor.focus
-          ? await this.executor.focus(this.targetWindow,{signal:operation.signal})
-          : await this.executor.run(name,nativeArgs,{signal:operation.signal});
+        const focused=await this.executor.focus(this.targetWindow,{signal:operation.signal});
         if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
         if(!focused.ok){
           const refused=focused.error==='focus-refused'||focused.error==='target-not-foreground';
           this.auditLog.write({botId,command:name,outcome:focused.error||'focus-refused',app:this.targetWindow.processName});
-          return fail(refused?'focus-refused':focused.error||'focus-refused', refused?'Windows refused to foreground the approved window.':focused.message);
+          return fail(refused?'focus-refused':focused.error||'focus-refused', refused?'Windows refused to foreground the approved window.':focused.message||focused.error||'focus-refused');
         }
         const restored=await this.executor.foreground({signal:operation.signal});
         if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
@@ -142,7 +140,7 @@ export class HostController extends EventEmitter {
         if(this.snapshots.size>8)this.snapshots.delete(this.snapshots.keys().next().value);
         result={...result,snapshotId};
       }
-      this.auditLog.write({botId,command:name,outcome:result.ok?'ok':result.error||'failed',app:foreground.processName});
+      this.auditLog.write({botId,command:name,outcome:result.ok?'ok':result.error||'failed',app:(result.window||this.targetWindow||foreground).processName});
       return result.ok?{ok:true,result}:fail(result.error||'command-failed');
     }catch(error){return fail(operation.signal.aborted?'command-cancelled':error.message);}
     finally {clearTimeout(timer);if(this.operation===operation)this.operation=null;
