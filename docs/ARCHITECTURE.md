@@ -19,7 +19,7 @@ flowchart LR
 
 Provisioning creates a host ID and independent host, owner, and bot credentials. The relay stores SHA-256 hashes of those three credentials, not the raw values. Provisioning itself requires a separate `PROVISIONING_SECRET` Worker secret. The provisioning script reads its copy from `BOTDESK_PROVISIONING_SECRET`, requires a private `--out` file, and does not print the credentials.
 
-The owner credential can create or cancel a time window. The bot credential can request actions within an owner-authorized session but cannot arm the PC or modify a schedule. The host credential authenticates the Windows connection. The local host also holds the owner credential for its local GO LIVE and PAUSE controls; bot clients must never receive it.
+The owner credential can create or cancel a time window. The bot credential can request actions within an owner-authorized session but cannot arm the PC or modify a schedule. The host credential authenticates the Windows connection. The local host also holds the owner credential for its local GO LIVE and PAUSE controls; bot clients must never receive it. An owner-authenticated phone page may retrieve the existing host-saved bot token for Show/Copy; that retrieve is not a bot command and does not store plaintext on the relay.
 
 The phone link stores the owner credential in a URL fragment. The fragment is not sent in the HTTP request; dashboard JavaScript sends the credential in an Authorization header. Host WebSocket credentials are checked in the HTTP upgrade header before accepting the socket. Bot commands also use Authorization headers. Query parameters are rejected, and host authentication does not use an unauthenticated first-message exchange.
 

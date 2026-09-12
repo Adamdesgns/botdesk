@@ -32,6 +32,12 @@ export class HostController extends EventEmitter {
       contractVersion:CONTRACT_VERSION, capabilities:CAPABILITY_FLAGS,
       scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:false}};
   }
+  revealBotCredential() {
+    const token = this.configStore.load().botToken;
+    const present = typeof token === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(token);
+    this.auditLog.write({ command: 'owner-bot-credential', outcome: present ? 'revealed' : 'missing' });
+    return present ? { ok: true, token } : { ok: false, error: 'bot-credential-not-saved' };
+  }
   selectTarget(window) { this.setMode('off', {source:'target-changed'}); this.targetWindow=window; this.emitStatus(); }
   whenIdle() { return this.idlePromise || Promise.resolve(); }
   clearLocalStop() { if(this.inputSafetyFault)throw new Error(this.inputSafetyFault);this.stopLatched=false; this.emitStatus(); }
