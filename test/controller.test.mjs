@@ -288,3 +288,76 @@ test('focus recovery invalidates previous snapshots',async t=>{
   s.executor.focus=async()=>{s.changeWindow(target());return {ok:true};};await s.capture();
   assert.equal((await s.controller.runCommand(s.command('type',{snapshotId:old,text:'test'}))).error,'fresh-snapshot-required');
 });
+
+test('explicit focus restores only the approved HWND/PID after another window steals foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: 'stale', x: 1, y: 1 }))).error, 'target-changed');
+  s.executor.focus = async (targetWindow, options) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options });
+    assert.equal(targetWindow.handle, '1001');
+    assert.equal(targetWindow.processId, 123);
+    s.changeWindow(target());
+    return { ok: true, window: target() };
+  };
+  const focused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(focused.ok, true, JSON.stringify(focused));
+  assert.equal(focused.result.focused, true);
+  assert.equal(focused.result.window.handle, '1001');
+  assert.equal(s.calls.filter((call) => call.name === 'focus').length, 1);
+  assert.equal(s.calls.every((call) => !call.args?.expectedWindow || (call.args.expectedWindow.handle === '1001' && call.args.expectedWindow.processId === 123)), true);
+});
+
+test('explicit focus fails closed with a clear error when Windows refuses to steal foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.focus = async (targetWindow) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
+    return { ok: false, error: 'focus-refused' };
+  };
+  const refused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, 'focus-refused');
+  assert.match(refused.message, /Windows refused to foreground the approved window/);
+  assert.equal(s.calls.every((call) => call.args?.expectedWindow?.handle === '1001' && call.args.expectedWindow.processId === 123), true);
+});
+
+test('successful native focus still fails closed if the restored window is sensitive', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.focus = async (targetWindow) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
+    s.changeWindow({ ...target(), title: 'Sign in to account', passwordPresent: true });
+    return { ok: true };
+  };
+  const blocked = await s.controller.runCommand(s.command('focus'));
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, 'credential');
+  assert.equal(blocked.result?.focused, undefined);
+  assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
+});
+
+test('list_monitors works while another allowed window is foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.run = async (name, args, options) => {
+    s.calls.push({ name, args, options });
+    assert.equal(name, 'list_monitors');
+    return { ok: true, monitors: [{ index: 0, primary: true, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] };
+  };
+  const listed = await s.controller.runCommand(s.command('list_monitors'));
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.result.monitors[0].primary, true);
+  assert.equal(s.calls.some((call) => call.name === 'focus'), false);
+});
+
+test('oversized screenshot data is rejected as capture-too-large before relay delivery', async (t) => {
+  const s = setup(t); s.arm();
+  s.executor.run = async (name) => {
+    if (name !== 'screenshot') return { ok: true, window: target() };
+    return { ok: true, window: target(), image: { mimeType: 'image/jpeg', data: 'A'.repeat(7_500_001), width: 1920, height: 1080 } };
+  };
+  const oversized = await s.controller.runCommand(s.command('screenshot'));
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.error, 'capture-too-large');
+});
