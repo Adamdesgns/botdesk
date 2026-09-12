@@ -212,6 +212,67 @@ test('bot focus, monitors and clipboard are valid commands; owner preview cannot
   assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'list_monitors', args: {} })).status, 503);
 });
 
+test('owner can retrieve the existing host-saved bot token; bots and status cannot', async t => {
+  const c = await provision();
+  assert.equal((await api(ownerRoute(c) + '/bot-credential', '')).status, 401);
+  assert.equal((await api(ownerRoute(c) + '/bot-credential', c.botToken)).status, 401);
+  assert.equal((await api(ownerRoute(c) + '/bot-credential', c.hostToken)).status, 401);
+  assert.equal((await api(botRoute(c), c.botToken, { name: 'bot-credential' }, { 'x-bot-id': 'bot-a' })).status, 400);
+  assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'bot-credential' })).body.error, 'invalid-command');
+  assert.equal((await api(ownerRoute(c) + '/bot-credential', c.ownerToken, { token: 'nope' })).status, 405);
+  const offline = await api(ownerRoute(c) + '/bot-credential', c.ownerToken);
+  assert.equal(offline.status, 503);
+  assert.equal(offline.body.error, 'host-offline');
+  assert.equal(Object.hasOwn(offline.body, 'token'), false);
+  const status = await api(ownerRoute(c) + '/status', c.ownerToken);
+  assert.equal(JSON.stringify(status.body).includes(c.botToken), false);
+  assert.equal(Object.hasOwn(status.body, 'token'), false);
+  assert.equal(Object.hasOwn(status.body, 'botToken'), false);
+
+  const configuration = { ...c, relayUrl: origin, allowRemoteArm: true, allowedApps: ['notepad'], botToken: c.botToken };
+  const target = { handle: '101', processId: 1001, processName: 'notepad', title: 'Test document', integrity: 'medium', desktop: 'default', automationChecked: true, passwordPresent: false, passwordFocused: false, geometry: { x: 0, y: 0, width: 1, height: 1 } };
+  const audit = [];
+  const controller = new HostController({
+    configStore: { load: () => configuration },
+    auditLog: { write: (entry) => { audit.push(entry); return entry; } },
+    executor: { foreground: async () => ({ ...target }), run: async () => ({ ok: true }), recordStart: async () => ({ ok: true }), recordStop: async () => ({ ok: true }) }
+  });
+  const client = new RelayClient({
+    getConfig: () => configuration,
+    onCommand: m => controller.runCommand(m),
+    onOwnerState: m => controller.applyOwnerState(m),
+    onOwnerSecret: () => controller.revealBotCredential()
+  });
+  controller.attachRelay(client);
+  t.after(() => { controller.emergencyStop('test-end'); client.disconnect(); });
+  const ready = new Promise(resolve => client.on('status', s => { if (s.authenticated) resolve(); }));
+  client.connect(); await ready;
+
+  const revealed = await api(ownerRoute(c) + '/bot-credential', c.ownerToken);
+  assert.equal(revealed.status, 200, JSON.stringify(revealed.body));
+  assert.equal(revealed.body.present, true);
+  assert.equal(revealed.body.token, c.botToken);
+  const after = await api(ownerRoute(c) + '/status', c.ownerToken);
+  assert.equal(JSON.stringify(after.body).includes(c.botToken), false);
+  assert.equal(JSON.stringify(audit).includes(c.botToken), false);
+  assert.equal(JSON.stringify(controller.getStatus()).includes(c.botToken), false);
+});
+
+test('owner bot-token retrieve times out without forcing the session off', async t => {
+  const c = await provision();
+  const socket = await connected(c, t);
+  assert.equal((await arm(c, socket)).body.mode, 'armed');
+  const pending = api(ownerRoute(c) + '/bot-credential', c.ownerToken);
+  const request = await socket.next('owner_secret_request');
+  assert.equal(request.name, 'botToken');
+  assert.equal(Object.hasOwn(request, 'token'), false);
+  const result = await pending;
+  assert.equal(result.status, 504);
+  assert.equal(result.body.error, 'secret-timeout');
+  assert.equal(Object.hasOwn(result.body, 'token'), false);
+  assert.equal((await api(ownerRoute(c) + '/status', c.ownerToken)).body.mode, 'armed');
+});
+
 test('invalid bodies, request IDs, query credentials, origin, and unknown commands fail closed', async () => {
   const c = await provision();
   assert.equal((await command(c, 'unknown')).status, 400);

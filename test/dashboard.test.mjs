@@ -25,3 +25,49 @@ test('pending connection, pending activation, future schedule and live remain di
   const live=render({mode:'armed',hostOnline:true,liveEndsAt:Date.now()+60000});
   assert.equal(live.get('#mode').textContent,'LIVE');assert.match(live.get('#countdown').textContent,/^Live for /);
 });
+
+function dashboardFn(name){
+  const line=source.match(new RegExp('^function '+name+'\\(.*$','m'));
+  assert.ok(line, name+' must be a line-start dashboard helper');
+  return line[0];
+}
+function credentialView(state){
+  const context=vm.createContext({});
+  return vm.runInContext(dashboardFn('maskBotCredential')+';'+dashboardFn('botCredentialView')+';botCredentialView('+JSON.stringify(state)+')',context);
+}
+
+test('phone bot-token UI is present and masked by default',()=>{
+  assert.match(source,/<input id="bot-token-display" type="password"/);
+  assert.match(source,/<button id="show-bot-token"[^>]*disabled>SHOW<\/button>/);
+  assert.match(source,/<button id="copy-bot-token"[^>]*disabled>COPY<\/button>/);
+  assert.match(source,/\/api\/owner\/'\+host\+'\/bot-credential/);
+  assert.doesNotMatch(source,/botTokenCache=location/);
+  const locked=credentialView({hasToken:false,revealed:false,token:'',error:''});
+  assert.equal(locked.inputType,'password');
+  assert.equal(locked.display,'');
+  assert.equal(locked.disabled,true);
+  assert.equal(locked.showLabel,'SHOW');
+  const masked=credentialView({hasToken:true,revealed:false,token:'existing-bot-token-value-should-stay-hidden',error:''});
+  assert.equal(masked.inputType,'password');
+  assert.equal(masked.display,'');
+  assert.equal(masked.disabled,false);
+  assert.equal(masked.showLabel,'SHOW');
+  assert.equal(masked.display.includes('existing-bot-token-value-should-stay-hidden'),false);
+});
+
+test('phone Show reveals only after owner auth; Hide remasks',()=>{
+  const token='owner-visible-bot-token-value-for-phone-ui-tests';
+  const locked=credentialView({hasToken:false,revealed:true,token,error:''});
+  assert.equal(locked.disabled,true);
+  assert.equal(locked.display,'');
+  assert.equal(locked.inputType,'password');
+  const shown=credentialView({hasToken:true,revealed:true,token,error:''});
+  assert.equal(shown.disabled,false);
+  assert.equal(shown.display,token);
+  assert.equal(shown.inputType,'text');
+  assert.equal(shown.showLabel,'HIDE');
+  const hidden=credentialView({hasToken:true,revealed:false,token,error:''});
+  assert.equal(hidden.display,'');
+  assert.equal(hidden.inputType,'password');
+  assert.equal(hidden.showLabel,'SHOW');
+});

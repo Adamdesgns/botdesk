@@ -4,8 +4,8 @@ import WebSocket from 'ws';
 import { relayOrigin } from './config-store.mjs';
 
 export class RelayClient extends EventEmitter {
-  constructor({getConfig,onCommand,onOwnerState}) {
-    super();Object.assign(this,{getConfig,onCommand,onOwnerState});
+  constructor({getConfig,onCommand,onOwnerState,onOwnerSecret}) {
+    super();Object.assign(this,{getConfig,onCommand,onOwnerState,onOwnerSecret});
     this.socket=null;this.timer=null;this.heartbeat=null;this.closed=true;this.retryMs=1000;
   }
   connect(){this.closed=false;this.open();}
@@ -37,6 +37,15 @@ export class RelayClient extends EventEmitter {
       this.emit('status',{connected:true,authenticated:true});
     }else if(m.type==='heartbeat_ack')this.lastAck=Date.now();
     else if(m.type==='owner_state')await this.onOwnerState(m);
+    else if(m.type==='owner_secret_request'){
+      const result=this.onOwnerSecret?await this.onOwnerSecret(m):{ok:false,error:'bot-credential-unavailable'};
+      if(socket===this.socket&&socket.readyState===WebSocket.OPEN){
+        const payload={type:'owner_secret_result',requestId:m.requestId,ok:result?.ok===true};
+        if(payload.ok&&typeof result.token==='string')payload.token=result.token;
+        else payload.error=typeof result?.error==='string'?result.error:'bot-credential-unavailable';
+        socket.send(JSON.stringify(payload));
+      }
+    }
     else if(m.type==='command'){const response=await this.onCommand(m);
       if(socket===this.socket&&socket.readyState===WebSocket.OPEN){
         const payload=JSON.stringify({type:'command_result',commandId:m.commandId,...response});

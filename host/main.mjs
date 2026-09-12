@@ -112,7 +112,7 @@ app.whenReady().then(()=>{
   recorder=new RecordingService({directory:path.join(app.getPath('userData'),'captures'),send});
   const executor=new DesktopExecutor({recorder});
   controller=new HostController({configStore,auditLog:new AuditLog(path.join(app.getPath('userData'),'logs')),executor});
-  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m)});
+  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m),onOwnerSecret:()=>controller.revealBotCredential()});
   controller.attachRelay(relay);
   mainWindow=lockedWindow({width:980,height:830,minWidth:760,minHeight:650,backgroundColor:'#0d0d0d',title:'BotDesk Host'});
   mainWindow.on('close',event=>{if(!quitting){event.preventDefault();mainWindow.hide();}});

@@ -10,7 +10,7 @@ Observed failure points:
 2. **Host AppData virtualization** — when Codex (MSIX) launches BotDesk, pairing and `config.json` land under  
    `%LOCALAPPDATA%\Packages\OpenAI.Codex_*\LocalCache\...`  
    Ordinary Explorer launches look at the real profile AppData and appear unpaired.
-3. **Host config vs pairing** — encrypted host config stores `hostToken`/`ownerToken`. `botToken` lives in the private pairing file for bot MCP use only.
+3. **Host config vs pairing** — encrypted host config stores `hostToken`/`ownerToken`, and `botToken` when the pairing import included it. The private pairing file remains the recovery copy for MCP. The owner phone can Show/Copy that existing host-saved bot token after owner authentication. The relay still stores hashes only.
 
 Local doctor (no secret values):
 

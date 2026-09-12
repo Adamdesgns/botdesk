@@ -8,6 +8,22 @@ Host, owner, bot and provisioning credentials are separate. A bot credential can
 
 The relay stores credential hashes. Host credentials saved in config.json are encrypted using Electron safeStorage backed by Windows. This protects data at rest, not against malware running as the same Windows user. The one-time provisioning output file contains plaintext secrets and must stay out of source control, captures and bot conversations.
 
+Owner phone Show/Copy of the existing bot token reads that host-saved pairing material. It does not rotate credentials and does not persist plaintext on the relay.
+
+### Owner bot-token retrieve
+
+| Store | What is kept | Who can read it |
+| --- | --- | --- |
+| Private pairing file | Provisioned host, owner, and bot tokens | Whoever has the file |
+| Host `config.json` | DPAPI-encrypted host, owner, and bot tokens when pairing was imported | The Windows user running BotDesk |
+| Relay Durable Object | SHA-256 hashes of the three tokens, plus the owner schedule | No plaintext. Hashes are used only for role checks |
+| Owner phone page | Owner token in the URL fragment; bot token only in memory after Show or Copy | The person who opened the private owner link |
+| Bot MCP / bot HTTP | Bot token from the runner environment | The approved bot. It cannot call owner routes or the host reveal path |
+
+The phone calls `GET /api/owner/:hostId/bot-credential` with the owner Bearer token. The relay authorizes the owner role, asks the connected host over the already-authenticated host socket (`owner_secret_request`), and returns that existing token only in that HTTP response. Bots using the bot token receive 401. Bot command names cannot request it. Host `status`, owner `status`, MCP tools, audit rows, and bus/log text do not include the plaintext token.
+
+Fail closed: no owner fragment, host offline, host busy, missing host-saved `botToken`, or a timed-out host reply. A retrieve timeout does not force the session OFF. Hide or leaving the page clears the phone cache. This path is not deployed with this change.
+
 A start/end window is stored only after an authenticated owner request. Restarting the relay starts command execution off. A still-valid saved window may arm a connected host after the host acknowledges the new session. Host application restart loses its target selection and cannot grant access until a target is selected locally again.
 
 ## Command controls
