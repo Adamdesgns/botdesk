@@ -202,6 +202,16 @@ test('disconnect cancels pending work; a saved owner timer resumes only after a 
   await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.mode === 'armed');
 });
 
+test('bot focus, monitors and clipboard are valid commands; owner preview cannot restore foreground', async () => {
+  const c = await provision();
+  assert.equal((await command(c, 'focus')).body.error, 'host-offline');
+  assert.equal((await command(c, 'list_monitors')).body.error, 'host-offline');
+  assert.equal((await command(c, 'clipboard_read')).body.error, 'host-offline');
+  assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'focus', args: {} })).body.error, 'owner-command-blocked');
+  assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'clipboard_write', args: { text: 'x' } })).body.error, 'owner-command-blocked');
+  assert.equal((await api(ownerRoute(c) + '/command', c.ownerToken, { name: 'list_monitors', args: {} })).status, 503);
+});
+
 test('invalid bodies, request IDs, query credentials, origin, and unknown commands fail closed', async () => {
   const c = await provision();
   assert.equal((await command(c, 'unknown')).status, 400);

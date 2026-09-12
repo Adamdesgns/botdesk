@@ -263,6 +263,7 @@ const configControls = [...fields, 'allowedApps', 'remoteArm', 'startAtLogin', '
 async function saveSettings(section) {
   if (configControls.some((id) => pending.has(id))) return;
   const config = readDraft();
+  for (const key of ['hostToken', 'ownerToken', 'botToken']) if (!config[key]) delete config[key];
   notice('Saving settings on this PC…', section);
   await action(async () => {
     const result = checked(await window.botdesk.saveConfig(config));

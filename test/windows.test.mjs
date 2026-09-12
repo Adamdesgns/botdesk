@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runWindowsAction } from '../host/windows.mjs';
@@ -52,6 +53,17 @@ test('native C# compiles on Windows without observing or controlling any apps', 
   const executable=path.join(process.env.SystemRoot || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
   const output=execFileSync(executable,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'scripts/windows-helper.ps1'),'-CompileOnly'],{encoding:'utf8',timeout:25000,windowsHide:true});
   assert.deepEqual(JSON.parse(output),{ok:true,compiled:true});
+});
+
+test('native helper source includes JPEG large-window capture, monitors, clipboard and E/WASD keys', () => {
+  const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts/windows-helper.ps1'), 'utf8');
+  assert.match(source, /useJpeg/);
+  assert.match(source, /image\/jpeg/);
+  assert.match(source, /list_monitors/);
+  assert.match(source, /ClipboardRead/);
+  assert.match(source, /ClipboardWrite/);
+  assert.match(source, /"E","W","A","S","D","SPACE"/);
+  assert.doesNotMatch(source, /scale factor|ScaleFactor/);
 });
 
 test('native guard errors are precise but foreign exception content stays private', {skip:process.platform!=='win32',timeout:30000}, () => {

@@ -64,6 +64,20 @@ test('credential save requires encryption and validation leaves the prior file i
   }
 });
 
+test('blank token fields keep previously saved secrets; host pairing does not require botToken', (t) => {
+  const { store } = setup(t);
+  store.save({ relayUrl: pairing.relayUrl, hostId: pairing.hostId, hostToken: pairing.hostToken, ownerToken: pairing.ownerToken });
+  assert.equal(store.load().hostToken, pairing.hostToken);
+  assert.equal(store.load().ownerToken, pairing.ownerToken);
+  assert.equal(store.load().botToken, '');
+  store.save({ botToken: pairing.botToken });
+  assert.equal(store.load().botToken, pairing.botToken);
+  store.save({ hostToken: '', ownerToken: '   ', botToken: '', startAtLogin: false });
+  assert.equal(store.load().hostToken, pairing.hostToken);
+  assert.equal(store.load().ownerToken, pairing.ownerToken);
+  assert.equal(store.load().botToken, pairing.botToken);
+});
+
 test('settings accept true booleans only and cannot add shell executables to allowlist', (t) => {
   const { store } = setup(t);
   store.save({ allowRemoteArm: 'true', startAtLogin: 1, allowedApps: ['msedge', 'powershell', 'cmd'], injectedSetting: 'ignored' });

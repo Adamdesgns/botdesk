@@ -43,6 +43,34 @@ test('configured allowlist cannot permit shell or code editor processes', () => 
   }
 });
 
+test('focus may restore the approved target when another window is foreground', () => {
+  const other = { ...window, handle: '200', processId: 99, processName: 'chrome', title: 'Unrelated tab' };
+  assert.equal(validateCommand('focus', {}, { ...context(), foreground: other }).allowed, true);
+  assert.equal(validateCommand('focus', {}, { ...context(), mode: 'off', foreground: other }).category, 'not-armed');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: null, foreground: other }).category, 'target-required');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, title: 'Sign in to account' }, foreground: other }).category, 'credential');
+  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, processName: 'firefox' }, foreground: other, allowedApps: ['msedge'] }).category, 'app-blocked');
+  assert.equal(validateCommand('click', { x: 1, y: 2 }, { ...context(), foreground: other }).category, 'target-changed');
+});
+
+test('list_monitors is armed-only and does not require the approved window to stay foreground', () => {
+  const other = { ...window, handle: '200', processId: 99, processName: 'chrome', title: 'Unrelated tab' };
+  assert.equal(validateCommand('list_monitors', {}, context()).allowed, true);
+  assert.equal(validateCommand('list_monitors', {}, { ...context(), foreground: other }).allowed, true);
+  assert.equal(validateCommand('list_monitors', {}, { ...context(), mode: 'off' }).category, 'not-armed');
+  assert.equal(validateCommand('list_monitors', {}, { ...context(), expiresAt: 1000 }).category, 'expired');
+});
+
+test('clipboard write is bounded plain text; dangerous keys stay blocked while E/WASD and CTRL+C/V/S are allowed', () => {
+  assert.equal(validateCommand('clipboard_write', { text: 'hello' }, context()).allowed, true);
+  assert.equal(validateCommand('clipboard_write', { text: '' }, context()).category, 'bad-arguments');
+  assert.equal(validateCommand('clipboard_write', { text: 'x'.repeat(4001) }, context()).category, 'bad-arguments');
+  assert.equal(validateCommand('clipboard_write', { text: 'line\u0000break' }, context()).category, 'bad-arguments');
+  for (const key of ['CTRL+C', 'CTRL+V', 'CTRL+X', 'CTRL+S', 'E', 'W', 'A', 'S', 'D', 'SPACE']) {
+    assert.equal(validateCommand('key', { key }, context()).allowed, true);
+  }
+});
+
 test('Studio is eligible only after opt-in, without weakening sensitive-window checks', () => {
   const studio = { ...window, processName: 'RobloxStudioBeta', title: 'WorldGame-dev - Roblox Studio' };
   assert.equal(isAllowedWindow(studio), false);
