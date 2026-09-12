@@ -138,7 +138,7 @@ These instructions follow xAI's documented configuration format; a real Grok Bui
 
 ## Use the phone while away
 
-- The owner console can **Show** or **Copy** the existing bot token after you open the private owner link. It is masked by default, owner-authenticated only, and reads the token saved on the PC. It does not rotate credentials.
+- The owner console can **Show** or **Copy** the existing bot token after you open the private owner link. It is masked by default, owner-authenticated only, and reads the token saved on the PC. It does not rotate credentials. Hide or leaving the page clears the in-memory copy. **iPhone Safari** may refuse Copy after the first network retrieve (clipboard writes often need an active tap). Tap Copy again if that happens. Desktop or emulator fixture Copy is not real-phone / S-phone proof.
 - **GO LIVE — 8 HOURS** starts an immediate owner-authorized timer. The API accepts durations up to 12 hours. If the PC is temporarily offline, the timer is saved and access can start when that prepared host reconnects before the timer ends.
 - **Set a time window** saves one dated window. For example, select tomorrow at **6:00 AM** for START and tomorrow at **6:00 PM** for END, then choose **SAVE SCHEDULE**. Inputs use the phone's local timezone, displayed beside the fields. This is a one-time window, not a daily recurring schedule.
 - The page shows the saved dates, current PC connection, and a countdown until start or stop. Scheduled access starts automatically when the PC is ready and stops at the saved end time. No one needs to confirm at the PC.

@@ -9,19 +9,82 @@ export function dashboardHtml(hostId: string): string {
 <section class="control" aria-label="Remote access controls"><div class="control-top"><p class="eyebrow">REMOTE ACCESS</p><span class="host-id">${safeHost}</span></div><div id="mode" class="mode" aria-live="polite">CONNECTING</div><p id="detail" class="meta">Checking the PC…</p><p id="countdown" class="clock"></p><div class="controls"><button class="arm" data-action="armed" disabled><span>GO LIVE — 8 HOURS</span><span class="button-arrow" aria-hidden="true">↗</span></button><button data-action="paused" disabled>PAUSE</button><button class="stop" data-action="off" disabled>STOP NOW</button></div><p id="alert" class="alert" role="alert"></p></section>
 <section class="card" aria-labelledby="snapshot-heading"><div class="section-heading"><div><p class="eyebrow">ON-DEMAND SNAPSHOT</p><h2 id="snapshot-heading">Selected window</h2></div><button id="preview" disabled>TAKE SNAPSHOT</button></div><div class="snapshot-view"><div class="preview-empty"><span class="snapshot-icon" aria-hidden="true"></span><span>Your snapshot appears here.</span></div><img id="screen" alt="Selected window snapshot captured when requested"></div><p id="preview-time" class="meta"></p><p class="snapshot-note">A still image of the window selected on your PC. Available while access is live.</p></section>
 <section class="card" aria-labelledby="schedule-heading"><div class="section-heading"><div><p class="eyebrow">ONE-TIME SCHEDULE</p><h2 id="schedule-heading">Set a time window</h2></div><span class="limit">12H MAX</span></div><p class="meta" id="timezone"></p><div class="schedule-fields"><label>START<input id="schedule-start" type="datetime-local" required></label><label>END<input id="schedule-end" type="datetime-local" required></label></div><button id="save-schedule" disabled>SAVE SCHEDULE</button><p class="meta" id="schedule-detail">Choose one window up to 12 hours. BotDesk starts and stops automatically. STOP and PAUSE cancel it.</p></section>
-<section class="card" aria-labelledby="bot-credential-heading"><div class="section-heading"><div><p class="eyebrow">BOT CREDENTIAL</p><h2 id="bot-credential-heading">Existing bot token</h2></div></div><p class="meta">Retrieve the existing bot token saved on your PC. Masked until you show or copy it. Owner only. No rotation.</p><div class="secret-row"><input id="bot-token-display" type="password" readonly value="" autocomplete="off" spellcheck="false" placeholder="••••••••••••" aria-label="Bot token"><button id="show-bot-token" type="button" disabled>SHOW</button><button id="copy-bot-token" type="button" disabled>COPY</button></div><p class="meta" id="bot-credential-detail">Open the private owner link to retrieve this token.</p></section>
+<section class="card" aria-labelledby="bot-credential-heading"><div class="section-heading"><div><p class="eyebrow">BOT CREDENTIAL</p><h2 id="bot-credential-heading">Existing bot token</h2></div></div><p class="meta">Retrieve the existing bot token saved on your PC. Masked until you show or copy it. Owner only. No rotation. Hide, leaving the page, or switching apps clears the in-memory copy. iPhone Safari may need a second Copy tap after a network retrieve; desktop fixtures are not real-phone proof.</p><div class="secret-row"><input id="bot-token-display" type="password" readonly value="" autocomplete="off" spellcheck="false" placeholder="••••••••••••" aria-label="Bot token"><button id="show-bot-token" type="button" disabled>SHOW</button><button id="copy-bot-token" type="button" disabled>COPY</button></div><p class="meta" id="bot-credential-detail">Open the private owner link to retrieve this token.</p></section>
 <footer class="footnote"><span class="footnote-mark" aria-hidden="true">↳</span><p>Prepare BotDesk on the PC before leaving. Keep it <strong>awake, unlocked and online.</strong><br>Local emergency stop: <strong>Ctrl + Shift + F12</strong></p></footer><script>
-const host=${JSON.stringify(safeHost)};const token=location.hash.slice(1);const hasToken=/^[A-Za-z0-9_-]{43,128}$/.test(token);const screen=document.querySelector('#screen');let controlBusy=false;let previewBusy=false;let scheduleBusy=false;let current=null;let syncedSchedule=false;let botTokenCache=null;let botRevealed=false;
+const host=${JSON.stringify(safeHost)};const token=location.hash.slice(1);const hasToken=/^[A-Za-z0-9_-]{43,128}$/.test(token);const screen=document.querySelector('#screen');let controlBusy=false;let previewBusy=false;let scheduleBusy=false;let current=null;let syncedSchedule=false;
 function maskBotCredential(){return '••••••••••••'}
 function botCredentialView({hasToken,revealed,token,error}){if(!hasToken)return{display:'',inputType:'password',showLabel:'SHOW',disabled:true,detail:'Open the private owner link to retrieve this token.'};if(!revealed||!token)return{display:'',inputType:'password',showLabel:'SHOW',disabled:false,detail:error||'Masked. Show or copy retrieves the existing token from this PC. No rotation.'};return{display:token,inputType:'text',showLabel:'HIDE',disabled:false,detail:error||'Visible on this phone only. Hide when finished.'}}
-function paintBotCredential(error){const view=botCredentialView({hasToken,revealed:botRevealed,token:botTokenCache,error:error||''});const input=document.querySelector('#bot-token-display');const show=document.querySelector('#show-bot-token');input.value=view.display;input.type=view.inputType;show.textContent=view.showLabel;show.disabled=view.disabled;document.querySelector('#copy-bot-token').disabled=view.disabled;document.querySelector('#bot-credential-detail').textContent=view.detail}
 function botCredentialMessage(code){return({unauthorized:'Owner authentication failed. Reopen the private owner link.','host-offline':'PC is offline. The bot token stays on the PC.','bot-credential-not-saved':'Bot token is not saved on this PC. Import the original pairing file on the host. Do not rotate.','host-busy':'PC is busy. Try again.','secret-timeout':'The PC did not return the token in time. Try again.'})[code]||code}
-function hideBotCredential(){botRevealed=false;botTokenCache=null;paintBotCredential()}
+function createBotCredentialSession(options){
+  let cache=null,revealed=false,generation=0,inflight=null,pendingAction=false;
+  const allowed=/^[A-Za-z0-9_-]{32,128}$/;
+  const owns=()=>options.hasToken===true||(typeof options.hasToken==='function'&&options.hasToken());
+  function snapshot(error){return botCredentialView({hasToken:owns(),revealed,token:cache,error:error||''})}
+  function state(){return {cache,revealed,generation}}
+  function hide(){generation++;pendingAction=false;if(inflight){try{inflight.abort()}catch{/* ignore */}}inflight=null;cache=null;revealed=false;return{action:'hide',generation,view:snapshot()}}
+  async function load(gen){
+    if(!owns())return{ok:false,cancelled:false,fromCache:false};
+    if(cache)return{ok:true,token:cache,fromCache:true};
+    inflight=typeof AbortController==='function'?new AbortController():null;
+    try{
+      const data=await options.request(inflight?{signal:inflight.signal}:{});
+      if(gen!==generation)return{ok:false,cancelled:true,fromCache:false};
+      if(typeof data?.token!=='string'||!allowed.test(data.token))throw new Error('bot-credential-unavailable');
+      cache=data.token;return{ok:true,token:cache,fromCache:false};
+    }catch(error){
+      if(gen!==generation||inflight?.signal?.aborted)return{ok:false,cancelled:true,fromCache:false};
+      throw error;
+    }
+  }
+  async function show(){
+    if(!owns())return{action:'locked',view:snapshot()};
+    if(revealed||pendingAction)return hide();
+    pendingAction=true;
+    const gen=generation;
+    try{
+      const result=await load(gen);
+      if(result.cancelled||gen!==generation)return{action:'stale',view:snapshot()};
+      revealed=true;pendingAction=false;return{action:'show',fromCache:result.fromCache,view:snapshot()};
+    }catch(error){
+      if(gen!==generation)return{action:'stale',view:snapshot()};
+      pendingAction=false;return{action:'error',view:snapshot(options.message(error.message))};
+    }
+  }
+  async function copy(){
+    if(!owns())return{action:'locked',copied:false,view:snapshot()};
+    if(pendingAction&&!cache)return hide();
+    const gen=generation;
+    try{
+      if(cache){
+        const writing=options.clipboard(cache);
+        await writing;
+        if(gen!==generation)return{action:'stale',copied:false,view:snapshot()};
+        return{action:'copied',copied:true,fromCache:true,view:snapshot('Copied. Keep it for the bot runner only.')};
+      }
+      pendingAction=true;
+      const result=await load(gen);
+      if(result.cancelled||gen!==generation)return{action:'stale',copied:false,view:snapshot()};
+      pendingAction=false;
+      await options.clipboard(result.token);
+      if(gen!==generation)return{action:'stale',copied:false,view:snapshot()};
+      return{action:'copied',copied:true,fromCache:false,view:snapshot('Copied. Keep it for the bot runner only.')};
+    }catch(error){
+      if(gen!==generation)return{action:'stale',copied:false,view:snapshot()};
+      const gesture=/notallowed|clipboard|document is not focused|writetext/i.test(String(error&&(error.name||error.message)||error));
+      if(cache&&gesture)return{action:'copy-gesture-required',copied:false,view:snapshot('Token retrieved. Tap Copy again to write it to the clipboard. iPhone Safari may require that second tap after a network retrieve.')};
+      return{action:'error',copied:false,view:snapshot(options.message(error.message))};
+    }
+  }
+  return{hide,show,copy,snapshot,state};
+}
+function applyBotCredential(view){const input=document.querySelector('#bot-token-display');const show=document.querySelector('#show-bot-token');input.value=view.display;input.type=view.inputType;show.textContent=view.showLabel;show.disabled=view.disabled;document.querySelector('#copy-bot-token').disabled=view.disabled;document.querySelector('#bot-credential-detail').textContent=view.detail}
+function paintBotCredential(error){applyBotCredential(botCredential.snapshot(error))}
+function hideBotCredential(){applyBotCredential(botCredential.hide().view)}
 function alertMessage(message){const messages={'native-action-blocked':'Windows blocked activation of the selected window. Access is OFF.','focus-refused':'Windows would not bring the selected window forward. Access is OFF.','target-not-foreground':'The selected window is not in front. Access is OFF.','target-changed':'The selected window was closed, hidden or minimized. Choose it again on the PC.','desktop-blocked':'Unlock the PC before starting access.'};document.querySelector('#alert').textContent=messages[message]||message}
 function clearScreen(){screen.removeAttribute('src');screen.style.display='none';document.querySelector('#preview-time').textContent=''}
 function localDateValue(d){const local=new Date(d.getTime()-d.getTimezoneOffset()*60000);return local.toISOString().slice(0,16)}
 const nextStart=new Date();nextStart.setHours(6,0,0,0);if(nextStart<=new Date())nextStart.setDate(nextStart.getDate()+1);const nextEnd=new Date(nextStart);nextEnd.setHours(18,0,0,0);document.querySelector('#schedule-start').value=localDateValue(nextStart);document.querySelector('#schedule-end').value=localDateValue(nextEnd);document.querySelector('#timezone').textContent='Times on this phone: '+Intl.DateTimeFormat().resolvedOptions().timeZone;
-async function request(path,body){const r=await fetch(path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json','x-request-id':crypto.randomUUID()},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(body?25000:10000),cache:'no-store'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data}
+async function request(path,body,extra){const timeout=AbortSignal.timeout(body?25000:10000);const signal=extra?.signal&&typeof AbortSignal.any==='function'?AbortSignal.any([timeout,extra.signal]):timeout;const r=await fetch(path,{method:body?'POST':'GET',headers:{authorization:'Bearer '+token,'content-type':'application/json','x-request-id':crypto.randomUUID()},body:body?JSON.stringify(body):undefined,signal,cache:'no-store'});const data=await r.json();if(!r.ok)throw new Error(data.error||'Request failed');return data}
 function countdown(){const el=document.querySelector('#countdown');if(!current){el.textContent='';return}const end=current.liveEndsAt||current.expiresAt;const waiting=current.schedule&&Date.now()<current.schedule.startsAt;const target=end||(waiting?current.schedule.startsAt:null);if(!target){el.textContent=current.schedulePending?(current.scheduleError?'Activation failed. Access is OFF.':current.hostOnline?'Waiting for the PC to activate the selected window':'Waiting for the PC to connect'):'';return}const seconds=Math.max(0,Math.ceil((target-Date.now())/1000));const h=Math.floor(seconds/3600),m=Math.floor(seconds%3600/60),s=seconds%60;el.textContent=(waiting&&!end?'Starts in ':'Live for ')+h+'h '+String(m).padStart(2,'0')+'m '+String(s).padStart(2,'0')+'s'}
 function render(s){current=s;const live=['armed','running'].includes(s.mode);document.querySelector('#mode').textContent=live?'LIVE':(s.schedulePending?(s.scheduleError?'BLOCKED':'SCHEDULED'):(s.mode||'off').toUpperCase());document.querySelector('#detail').textContent=(s.hostOnline?'PC ONLINE':'PC OFFLINE')+(s.activeBot?' · '+s.activeBot:'');document.querySelector('[data-action="armed"]').disabled=!hasToken||controlBusy;document.querySelector('#preview').disabled=!hasToken||!s.hostOnline||!live||previewBusy;document.querySelector('#save-schedule').disabled=!hasToken||scheduleBusy;if(!s.hostOnline||!live)clearScreen();if(s.schedule){document.querySelector('#schedule-detail').textContent='Saved: '+new Date(s.schedule.startsAt).toLocaleString()+' → '+new Date(s.schedule.endsAt).toLocaleString()+'. Access resumes inside this window if the PC reconnects.';if(!syncedSchedule){document.querySelector('#schedule-start').value=localDateValue(new Date(s.schedule.startsAt));document.querySelector('#schedule-end').value=localDateValue(new Date(s.schedule.endsAt));syncedSchedule=true}}else{document.querySelector('#schedule-detail').textContent='Choose one window up to 12 hours. BotDesk starts and stops automatically. STOP and PAUSE cancel it.'}if(s.scheduleError)alertMessage(s.scheduleError);countdown()}
 async function refresh(){if(!hasToken)return;try{render(await request('/api/owner/'+host+'/status'))}catch(e){current=null;countdown();document.querySelector('#mode').textContent='UNKNOWN';document.querySelector('#detail').textContent='Could not verify the PC state';document.querySelector('[data-action="armed"]').disabled=true;document.querySelector('#preview').disabled=true;clearScreen();alertMessage(e.message)}}
@@ -29,12 +92,13 @@ document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{const 
 document.querySelector('#save-schedule').onclick=async()=>{if(scheduleBusy)return;const startsAt=new Date(document.querySelector('#schedule-start').value).getTime(),endsAt=new Date(document.querySelector('#schedule-end').value).getTime();if(!Number.isFinite(startsAt)||!Number.isFinite(endsAt)||endsAt<=startsAt||endsAt<=Date.now()||endsAt-startsAt>12*3600000){alertMessage('Choose an end after the start, within 12 hours.');return}scheduleBusy=true;document.querySelector('#save-schedule').disabled=true;try{render(await request('/api/owner/'+host+'/schedule',{startsAt,endsAt}));alertMessage('Schedule saved. BotDesk will start and stop automatically.')}catch(e){alertMessage(e.message)}finally{scheduleBusy=false;await refresh()}};
 document.querySelector('#preview').onclick=async()=>{if(previewBusy)return;previewBusy=true;clearScreen();try{const r=await request('/api/owner/'+host+'/command',{name:'screenshot',args:{}});const capture=r.result?.image||r.result;if(!capture||!['image/png','image/jpeg'].includes(capture.mimeType)||typeof capture.data!=='string'||capture.data.length>8388608)throw new Error('Invalid preview');screen.src='data:'+capture.mimeType+';base64,'+capture.data;screen.style.display='block';document.querySelector('#preview-time').textContent='Captured '+new Date().toLocaleTimeString();alertMessage('')}catch(e){alertMessage(e.message)}finally{previewBusy=false;await refresh()}};
 async function poll(){await refresh();setTimeout(poll,5000)}
-async function loadBotCredential(){if(!hasToken){paintBotCredential();return null}if(botTokenCache)return botTokenCache;const data=await request('/api/owner/'+host+'/bot-credential');if(typeof data.token!=='string'||!/^[A-Za-z0-9_-]{32,128}$/.test(data.token))throw new Error('bot-credential-unavailable');botTokenCache=data.token;return botTokenCache}
-document.querySelector('#show-bot-token').onclick=async()=>{if(!hasToken){paintBotCredential();return}if(botRevealed){botRevealed=false;paintBotCredential();return}try{await loadBotCredential();botRevealed=true;paintBotCredential()}catch(e){botRevealed=false;paintBotCredential(botCredentialMessage(e.message))}};
-document.querySelector('#copy-bot-token').onclick=async()=>{if(!hasToken){paintBotCredential();return}try{const value=await loadBotCredential();await navigator.clipboard.writeText(value);paintBotCredential('Copied. Keep it for the bot runner only.')}catch(e){paintBotCredential(botCredentialMessage(e.message))}};
+const botCredential=createBotCredentialSession({hasToken:()=>hasToken,request:(extra)=>request('/api/owner/'+host+'/bot-credential',undefined,extra),clipboard:(value)=>navigator.clipboard.writeText(value),message:botCredentialMessage});
+document.querySelector('#show-bot-token').onclick=async()=>{applyBotCredential((await botCredential.show()).view)};
+document.querySelector('#copy-bot-token').onclick=async()=>{applyBotCredential((await botCredential.copy()).view)};
 paintBotCredential();
 if(hasToken){document.querySelectorAll('[data-action]').forEach(b=>b.disabled=false);document.querySelector('#save-schedule').disabled=false;poll()}else{document.querySelector('#mode').textContent='LOCKED';document.querySelector('#detail').textContent='Open the private owner link saved during setup.'}setInterval(countdown,1000);
 document.addEventListener('visibilitychange',()=>{if(document.hidden){clearScreen();hideBotCredential()}else refresh()});
+document.addEventListener('pagehide',()=>{clearScreen();hideBotCredential()});
 </script></main></body></html>`;
 }
 
