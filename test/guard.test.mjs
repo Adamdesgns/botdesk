@@ -29,9 +29,9 @@ test('only screenshot-relative integer coordinates inside target are permitted',
   }
   assert.equal(validateCommand('click',{x:999,y:599},context()).allowed,true);
 });
-test('rejects clipboard, shell and devtools shortcuts; blocks control characters and executable URI text', () => {
-  for (const key of ['CTRL+ALT+DELETE','WIN+R','CTRL+V','CTRL+C','CTRL+X','F12','CTRL+SHIFT+I','ALT+F4']) assert.equal(validateCommand('key',{key},context()).category,'key-blocked');
-  assert.equal(validateCommand('key',{key:'TAB'},context()).allowed,true);
+test('rejects dangerous system shortcuts; blocks control characters and executable URI text', () => {
+  for (const key of ['CTRL+ALT+DELETE','WIN+R','F12','CTRL+SHIFT+I','ALT+F4']) assert.equal(validateCommand('key',{key},context()).category,'key-blocked');
+  for (const key of ['CTRL+C','CTRL+V','CTRL+X','CTRL+S','E','W','A','S','D','SPACE','TAB']) assert.equal(validateCommand('key',{key},context()).allowed,true);
   for (const text of ['', 'x'.repeat(4001),'first\nsecond','one\ttwo','javascript:alert(1)','file:///C:/secret','ms-settings:privacy']) assert.equal(validateCommand('type',{text},context()).category,'bad-arguments');
   assert.equal(validateCommand('type',{text:'Hello, world — 123'},context()).allowed,true);
 });

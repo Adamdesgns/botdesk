@@ -53,9 +53,9 @@ public static class BotDeskNative {
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr data);
   static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad","robloxstudiobeta" };
   static readonly Regex Denied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac|regedit|powershell|terminal|devtools)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|registry\s*editor|task\s*manager|device\s*manager|control\s*panel|group\s*policy|developer\s*tools|command\s*prompt",RegexOptions.IgnoreCase);
-  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+Z","ALT+LEFT","ALT+RIGHT","F5" };
+  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
-    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"Z",0x5A},{"LEFT",0x25},{"RIGHT",0x27}
+    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
   };
   sealed class GuardFailure : Exception {
     public GuardFailure(string reason) : base(reason) { }
@@ -196,20 +196,42 @@ public static class BotDeskNative {
     if(!GetWindowRect(hwnd,out before)) throw Block("geometry-unavailable");
     int width=before.Right-before.Left, height=before.Bottom-before.Top;
     if(width<1 || height<1 || width>7680 || height>4320 || (long)width*height>16000000) throw Block("capture-size-blocked");
-    string image;
+    string image; string mimeType;
     using(var bitmap=new Bitmap(width,height,PixelFormat.Format32bppArgb)) {
       using(var graphics=Graphics.FromImage(bitmap)) {
         IntPtr dc=graphics.GetHdc();
         try { if(!PrintWindow(hwnd,dc,2)) throw Block("window-capture-unavailable"); }
         finally { graphics.ReleaseHdc(dc); }
       }
-      using(var stream=new MemoryStream()) { bitmap.Save(stream,ImageFormat.Png); if(stream.Length>16000000) throw Block("capture-size-blocked"); image=Convert.ToBase64String(stream.ToArray()); }
+      // Prefer JPEG for large Studio/game windows: PNG base64 previously completed
+      // locally then timed out crossing the relay frame budget.
+      bool useJpeg = width*height >= 900000 || width >= 1600 || height >= 1200;
+      using(var stream=new MemoryStream()) {
+        if(useJpeg) {
+          ImageCodecInfo jpeg = null;
+          foreach(var codec in ImageCodecInfo.GetImageEncoders()) {
+            if(codec.FormatID == ImageFormat.Jpeg.Guid) { jpeg = codec; break; }
+          }
+          if(jpeg == null) throw Block("capture-encoder-unavailable");
+          using(var parameters = new EncoderParameters(1)) {
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
+            bitmap.Save(stream, jpeg, parameters);
+          }
+          mimeType = "image/jpeg";
+        } else {
+          bitmap.Save(stream, ImageFormat.Png);
+          mimeType = "image/png";
+        }
+        if(stream.Length>6000000) throw Block("capture-size-blocked");
+        image=Convert.ToBase64String(stream.ToArray());
+        if(image.Length>7500000) throw Block("capture-size-blocked");
+      }
     }
     Check(handle,pid,true); RECT after; GetWindowRect(hwnd,out after);
     if(before.Left!=after.Left || before.Top!=after.Top || before.Right!=after.Right || before.Bottom!=after.Bottom) throw Block("target-moved-during-capture");
     var window=Describe(hwnd,true);
     if(!(bool)window["automationChecked"] || (bool)window["passwordPresent"] || (bool)window["passwordFocused"]) throw Block("password-control");
-    return new Dictionary<string,object>{{"ok",true},{"window",window},{"geometry",window["geometry"]},{"image",new Dictionary<string,object>{{"mimeType","image/png"},{"data",image},{"width",width},{"height",height}}}};
+    return new Dictionary<string,object>{{"ok",true},{"window",window},{"geometry",window["geometry"]},{"image",new Dictionary<string,object>{{"mimeType",mimeType},{"data",image},{"width",width},{"height",height}}}};
   }
   public static Dictionary<string,object> Snapshot(string handle,uint pid) {
     IntPtr hwnd=Check(handle,pid,true);
@@ -237,12 +259,24 @@ public static class BotDeskNative {
     var element=AutomationElement.FromPoint(new System.Windows.Point(x,y));
     if(element==null || element.Current.ProcessId!=(int)pid || element.Current.IsPassword) throw Block("point-control-blocked");
   }
-  public static void Click(string handle,uint pid,int x,int y) {
+  public static void Click(string handle,uint pid,int x,int y,string button,int count) {
     IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
     if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
-    INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=2;
-    INPUT up=down; up.U.mi.dwFlags=4; Emit(new INPUT[]{down,up});
+    uint downFlag=2, upFlag=4;
+    if(String.Equals(button,"right",StringComparison.OrdinalIgnoreCase)) { downFlag=0x0008; upFlag=0x0010; }
+    else if(String.Equals(button,"middle",StringComparison.OrdinalIgnoreCase)) { downFlag=0x0020; upFlag=0x0040; }
+    else if(!String.IsNullOrEmpty(button) && !String.Equals(button,"left",StringComparison.OrdinalIgnoreCase)) throw Block("invalid-button");
+    if(count<1 || count>2) throw Block("invalid-click-count");
+    for(int i=0;i<count;i++) {
+      INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=downFlag;
+      INPUT up=down; up.U.mi.dwFlags=upFlag; Emit(new INPUT[]{down,up});
+    }
+  }
+  public static void Move(string handle,uint pid,int x,int y) {
+    IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
+    if(!SetCursorPos(x,y)) throw Block("cursor-failed");
+    Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
   }
   static readonly object DragLock=new object();
   static bool DragHeld=false, DragCancelled=false;
@@ -410,20 +444,57 @@ public static class BotDeskNative {
     for(int index=parts.Length-1;index>=0;index--) { INPUT up=new INPUT(); up.type=1; up.U.ki.wVk=Keys[parts[index]]; up.U.ki.dwFlags=2; items.Add(up); }
     Check(handle,pid,true); Emit(items.ToArray());
   }
-  public static void Scroll(string handle,uint pid,int deltaY) {
-    if(deltaY==0 || Math.Abs((long)deltaY)>1200) throw Block("invalid-scroll");
+  public static void Scroll(string handle,uint pid,int deltaY,int deltaX) {
+    if((deltaY==0 && deltaX==0) || Math.Abs((long)deltaY)>1200 || Math.Abs((long)deltaX)>1200) throw Block("invalid-scroll");
     IntPtr hwnd=Check(handle,pid,true); ModifiersReleased();
     RECT rect; GetWindowRect(hwnd,out rect); int x=rect.Left+(rect.Right-rect.Left)/2,y=rect.Top+(rect.Bottom-rect.Top)/2;
     PointCheck(hwnd,pid,x,y); if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
-    INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x0800; wheel.U.mi.mouseData=unchecked((uint)-deltaY); Emit(new INPUT[]{wheel});
+    if(deltaY!=0) {
+      INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x0800; wheel.U.mi.mouseData=unchecked((uint)-deltaY); Emit(new INPUT[]{wheel});
+    }
+    if(deltaX!=0) {
+      INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x1000; wheel.U.mi.mouseData=unchecked((uint)deltaX); Emit(new INPUT[]{wheel});
+    }
+  }
+  public static Dictionary<string,object> Monitors() {
+    var list=new List<Dictionary<string,object>>();
+    int index=0;
+    foreach(var screen in System.Windows.Forms.Screen.AllScreens) {
+      list.Add(new Dictionary<string,object>{
+        {"index",index++},
+        {"primary",screen.Primary},
+        {"bounds",new Dictionary<string,object>{{"x",screen.Bounds.X},{"y",screen.Bounds.Y},{"width",screen.Bounds.Width},{"height",screen.Bounds.Height}}},
+        {"workingArea",new Dictionary<string,object>{{"x",screen.WorkingArea.X},{"y",screen.WorkingArea.Y},{"width",screen.WorkingArea.Width},{"height",screen.WorkingArea.Height}}},
+        {"deviceName",screen.DeviceName??""}
+      });
+    }
+    return new Dictionary<string,object>{{"ok",true},{"monitors",list}};
+  }
+  public static Dictionary<string,object> ClipboardRead() {
+    string text="";
+    try { if(System.Windows.Forms.Clipboard.ContainsText()) text=System.Windows.Forms.Clipboard.GetText()??""; }
+    catch { throw Block("clipboard-unavailable"); }
+    if(text.Length>4000) text=text.Substring(0,4000);
+    return new Dictionary<string,object>{{"ok",true},{"text",text}};
+  }
+  public static void ClipboardWrite(string text) {
+    if(String.IsNullOrEmpty(text) || text.Length>4000) throw Block("invalid-clipboard-text");
+    try { System.Windows.Forms.Clipboard.SetText(text); }
+    catch { throw Block("clipboard-unavailable"); }
   }
 }
 '@
 
 try {
-  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing
-  $references = @([System.Drawing.Bitmap].Assembly.Location, [System.Windows.Automation.AutomationElement].Assembly.Location, [System.Windows.Automation.TreeScope].Assembly.Location, [System.Windows.Point].Assembly.Location)
+  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing, System.Windows.Forms
+  $references = @(
+    [System.Drawing.Bitmap].Assembly.Location,
+    [System.Windows.Automation.AutomationElement].Assembly.Location,
+    [System.Windows.Automation.TreeScope].Assembly.Location,
+    [System.Windows.Point].Assembly.Location,
+    [System.Windows.Forms.Screen].Assembly.Location
+  )
   Add-Type -TypeDefinition $source -ReferencedAssemblies $references -Language CSharp
   if ($CompileOnly) { @{ ok = $true; compiled = $true } | ConvertTo-Json -Compress; return }
   [BotDeskNative]::Init()
@@ -434,9 +505,14 @@ try {
   $inputArgs = $request.args
   if ($action -eq 'release_left') {
     [BotDeskNative]::ReleaseLeft(); $result = @{ ok = $true }
-  } elseif ($action -in @('foreground', 'list_windows')) {
+  } elseif ($action -in @('foreground', 'list_windows', 'list_monitors', 'clipboard_read')) {
     if ($action -eq 'foreground') { $result = @{ ok = $true; window = [BotDeskNative]::Foreground() } }
-    else { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
+    elseif ($action -eq 'list_windows') { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
+    elseif ($action -eq 'list_monitors') { $result = [BotDeskNative]::Monitors() }
+    else { $result = [BotDeskNative]::ClipboardRead() }
+  } elseif ($action -eq 'clipboard_write') {
+    if ($inputArgs.text -isnot [string]) { throw 'invalid-clipboard-text' }
+    [BotDeskNative]::ClipboardWrite([string]$inputArgs.text); $result = @{ ok = $true }
   } else {
     if ($null -eq $inputArgs.expectedWindow -or [string]$inputArgs.expectedWindow.handle -notmatch '^[1-9][0-9]{0,18}$' -or $inputArgs.expectedWindow.processId -isnot [int] -or $inputArgs.expectedWindow.processId -le 0) { throw 'invalid-target' }
     $targetHandle = [string]$inputArgs.expectedWindow.handle
@@ -447,7 +523,13 @@ try {
       'snapshot' { $result = [BotDeskNative]::Snapshot($targetHandle,$targetPid) }
       'click' {
         if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-point' }
-        [BotDeskNative]::Click($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
+        $button = if ($null -eq $inputArgs.button) { 'left' } else { [string]$inputArgs.button }
+        $count = if ($null -eq $inputArgs.count) { 1 } else { [int]$inputArgs.count }
+        [BotDeskNative]::Click($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y,$button,$count); $result = @{ ok = $true }
+      }
+      'move' {
+        if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-point' }
+        [BotDeskNative]::Move($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
       }
       'drag' {
         if (@($inputArgs.PSObject.Properties.Name | Where-Object { $_ -notin @('snapshotId','expectedWindow','geometry','snapshotTitle','points','durationMs') }).Count -gt 0) { throw 'invalid-drag' }
@@ -465,8 +547,9 @@ try {
       'type' { if ($inputArgs.text -isnot [string]) { throw 'invalid-text' }; [BotDeskNative]::TypeText($targetHandle,$targetPid,$inputArgs.text); $result = @{ ok = $true } }
       'key' { [BotDeskNative]::Press($targetHandle,$targetPid,([string]$inputArgs.key).ToUpperInvariant()); $result = @{ ok = $true } }
       'scroll' {
-        if ($inputArgs.deltaY -isnot [int]) { throw 'invalid-scroll' }
-        [BotDeskNative]::Scroll($targetHandle,$targetPid,$inputArgs.deltaY); $result = @{ ok = $true }
+        $deltaY = if ($null -eq $inputArgs.deltaY) { 0 } else { [int]$inputArgs.deltaY }
+        $deltaX = if ($null -eq $inputArgs.deltaX) { 0 } else { [int]$inputArgs.deltaX }
+        [BotDeskNative]::Scroll($targetHandle,$targetPid,$deltaY,$deltaX); $result = @{ ok = $true }
       }
       default { throw 'unknown-action' }
     }

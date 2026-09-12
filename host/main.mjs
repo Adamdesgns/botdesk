@@ -13,6 +13,12 @@ const dir=path.dirname(fileURLToPath(import.meta.url));
 let mainWindow,overlayWindow,controller,configStore,recorder,tray,quitting=false;
 let choices=[];let quitReady=false;let quitPending=false;
 if(process.env.BOTDESK_TEST_DATA)app.setPath('userData',process.env.BOTDESK_TEST_DATA);
+else if(!process.env.BOTDESK_KEEP_DEFAULT_USERDATA){
+  // Prefer a stable LocalAppData path shared by ordinary portable launches.
+  // Codex MSIX still virtualizes LocalAppData when it launches the host.
+  const localAppData=process.env.LOCALAPPDATA||path.join(process.env.USERPROFILE||'','AppData','Local');
+  app.setPath('userData',path.join(localAppData,'BotDesk'));
+}
 if(!app.requestSingleInstanceLock())app.quit();
 app.on('second-instance',()=>{mainWindow?.show();mainWindow?.focus();});
 function safeSend(window,event,value){
