@@ -4,7 +4,7 @@ A free Windows companion for Grok bot owners using a compatible tool runner.
 
 Let approved bots operate one selected app window on your Windows PC while you are away. Use your private phone dashboard to go live now, set a countdown, schedule a dated window such as **6 AM to 6 PM**, pause access, or turn it off.
 
-**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
+**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), [security boundaries](docs/SECURITY.md), and the next-boot [Notepad live checklist](docs/NOTEPAD-LIVE.md) (Unverified until AlienAdam is on).
 
 ## Prepare this PC
 

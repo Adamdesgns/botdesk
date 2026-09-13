@@ -4,6 +4,13 @@ This build adds an optional Roblox Studio target, a local session-length selecto
 (30 minutes by default), and `botdesk_drag` through the direct MCP SDK adapter.
 Existing browser/Notepad defaults are unchanged. Studio requires local opt-in.
 
+For the **default Notepad** control-surface run (screenshot → click → type →
+`botdesk_focus` after a steal → STOP mid-drag → `mode=off` + rejected follow-up),
+use [NOTEPAD-LIVE.md](NOTEPAD-LIVE.md). That checklist is still Unverified until
+AlienAdam is booted; it is not a Studio or GPU proof. Owner-phone Show/Copy
+(Safari second-tap) is [PR #5](https://github.com/Adamdesgns/botdesk/pull/5), not
+this Studio pack.
+
 ## Start a test
 
 1. Keep access OFF while updating the host, relay, and SDK adapter.
@@ -56,3 +63,7 @@ Actual Studio screenshot rendering, route drawing, cancellation during a real
 gesture, and the complete game test pack still require runtime evidence. Mouse
 input does not prove multitouch or a physical-phone test. Nothing here changes
 game release gates or authorizes Roblox publication.
+
+The current live **host** when the portable NSIS pack is stuck is
+`dist\win-unpacked\BotDesk.exe` built from `ac8a3b1`. A host rebuild does not
+update the MCP adapter or the deployed relay; see [NOTEPAD-LIVE.md](NOTEPAD-LIVE.md).

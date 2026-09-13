@@ -42,5 +42,6 @@ Use a normal user execution environment for GUI verification. A restricted sandb
 2. Test one bot tool runner and a dedicated browser profile: click/scroll coordinates, focus changes, locked-screen behavior, actual recording and cancellation.
 3. Verify a real phone from another network: schedule, STOP, disconnect/reconnect and expiry with the phone page closed.
 4. Verify installation and behavior on a clean Windows account/device. The local portable build is unsigned.
+5. On next AlienAdam boot, run the disposable Notepad control-surface list in [NOTEPAD-LIVE.md](NOTEPAD-LIVE.md). Until that folder exists with `RESULT.txt` = `PASS`, live rows stay Unverified. Owner-phone Show/Copy (Safari second-tap) is a separate [PR #5](https://github.com/Adamdesgns/botdesk/pull/5) deploy decision, not that Notepad run.
 
 Do not treat local tests as proof of unattended production readiness.
