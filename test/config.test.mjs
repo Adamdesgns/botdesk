@@ -86,6 +86,14 @@ test('settings accept true booleans only and cannot add shell executables to all
   assert.equal(store.load().injectedSetting, undefined);
 });
 
+test('host token validation matches the relay minimum so a short paste fails at save time, not as a silent 401', (t) => {
+  const { store } = setup(t);
+  assert.throws(() => store.save({ ...pairing, hostToken: 'h'.repeat(42) }), /Invalid hostToken: pairing tokens are 43/);
+  assert.throws(() => store.save({ ...pairing, hostId: 'PC-Upper' }), /Invalid host ID: use the lowercase hostId/);
+  store.save({ ...pairing, hostToken: 'h'.repeat(43) });
+  assert.equal(store.load().hostToken, 'h'.repeat(43));
+});
+
 test('relay configuration accepts TLS origins or explicit loopback and rejects credential URLs', () => {
   for (const url of ['https://relay.example.test', 'http://127.0.0.1:8787', 'http://localhost:8787', 'http://[::1]:8787']) assert.ok(relayOrigin(url));
   for (const url of ['http://public.example.test', 'http://10.0.0.2:8787', 'https://user:pass@example.test', 'https://example.test/path', 'https://example.test/?key=secret', 'https://example.test/#secret', 'file:///tmp/x']) assert.throws(() => relayOrigin(url));

@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { runWindowsAction } from '../host/windows.mjs';
+import { describeHelperError, helperSelfTest, runWindowsAction } from '../host/windows.mjs';
 function fixture() {
   const child=new EventEmitter();
   child.stdin=new PassThrough(); child.stdout=new PassThrough(); child.stderr=new PassThrough();
@@ -58,6 +58,35 @@ test('native timeout kills helper, invalid responses and failures stay generic',
   failure.child.stderr.end('PRIVATE INPUT');failure.child.emit('close',1);
   assert.equal((await failed).error,'windows-helper-failed');
 });
+test('helper self-test compiles only, never sends a request, and explains each failure', async () => {
+  const helperFile=fileURLToPath(new URL('../scripts/windows-helper.ps1',import.meta.url));
+  const unsupported=await helperSelfTest({platform:'linux',spawnImpl:()=>{throw new Error('must not spawn');}});
+  assert.equal(unsupported.error,'unsupported-platform'); assert.match(unsupported.message,/Windows only/);
+  const missing=await helperSelfTest({platform:'win32',helperFile:helperFile+'.does-not-exist',spawnImpl:()=>{throw new Error('must not spawn');}});
+  assert.equal(missing.error,'windows-helper-missing'); assert.match(missing.message,/unpack scripts\/windows-helper.ps1/);
+  const ok=fixture(); let wroteInput=false; ok.child.stdin.on('data',()=>{wroteInput=true;});
+  const passing=helperSelfTest({platform:'win32',helperFile,spawnImpl:ok.spawnImpl});
+  ok.child.stdout.end('{"ok":true,"compiled":true}'); ok.child.emit('close',0);
+  const result=await passing;
+  assert.equal(result.ok,true); assert.equal(result.compiled,true); assert.equal(wroteInput,false);
+  assert.ok(ok.details().argv.includes('-CompileOnly')); assert.equal(ok.details().options.shell,false);
+  assert.equal(ok.details().options.stdio[0],'ignore');
+  const failing=fixture(); const failed=helperSelfTest({platform:'win32',helperFile,spawnImpl:failing.spawnImpl});
+  failing.child.stderr.end('Add-Type : Cannot add type. \u001b[31mCompilation errors occurred.\u001b[0m'); failing.child.stdout.end(''); failing.child.emit('close',1);
+  const failure=await failed;
+  assert.equal(failure.error,'windows-helper-failed'); assert.equal(failure.exitCode,1);
+  assert.match(failure.message,/Constrained Language Mode/); assert.equal(failure.stderrExcerpt,'Add-Type : Cannot add type. [31mCompilation errors occurred.[0m');
+  const slow=fixture(); const timedOut=await helperSelfTest({platform:'win32',helperFile,spawnImpl:slow.spawnImpl,timeoutMs:5});
+  assert.equal(timedOut.error,'windows-helper-timeout'); assert.equal(slow.child.killed,1);
+  const odd=fixture(); const invalid=helperSelfTest({platform:'win32',helperFile,spawnImpl:odd.spawnImpl});
+  odd.child.stdout.end('Transcript started, output file is C:\\x.txt'); odd.child.emit('close',0);
+  assert.equal((await invalid).error,'windows-helper-invalid-response');
+  const noShell=await helperSelfTest({platform:'win32',helperFile,spawnImpl:()=>{throw new Error('ENOENT');}});
+  assert.equal(noShell.error,'windows-helper-start-failed');
+  assert.match(describeHelperError('made-up-code'),/reported an error\. \(made-up-code\)$/);
+  assert.match(describeHelperError('focus-refused'),/Click that window once/);
+});
+
 test('native C# compiles on Windows without observing or controlling any apps', {skip:process.platform!=='win32',timeout:30000}, () => {
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
   const executable=path.join(process.env.SystemRoot || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
