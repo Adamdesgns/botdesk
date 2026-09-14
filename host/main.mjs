@@ -97,7 +97,7 @@ function installIpc(){
     if(!focused.ok)throw new Error(describeHelperError(focused.error));
     if(epoch!==controller.epoch)throw new Error('Arming was cancelled.');
     configStore.save({allowRemoteArm:true});
-    send('status',controller.getStatus());
+    send('status',decorate(controller.getStatus()));
     if(controller.relayStatus.authenticated)return {ok:true,status:await controller.relay.ownerState('armed',input.minutes)};
     // Local sessions are useful for owner-present validation, but are never exposed to the network.
     throw new Error('Connect the relay before going live.');
