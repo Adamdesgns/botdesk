@@ -33,10 +33,11 @@ export class ConfigStore{
       if(typeof next[key]!=='string')throw new Error('Invalid pairing token.');
       const incoming=next[key].trim();
       next[key]=incoming==='saved'||incoming===''?old[key]:incoming;
-      if(next[key]&&!/^[A-Za-z0-9_-]{32,128}$/.test(next[key]))throw new Error('Invalid pairing token.');
+      // The relay only accepts 43–128 character tokens; a shorter paste can never authenticate.
+      if(next[key]&&!/^[A-Za-z0-9_-]{43,128}$/.test(next[key]))throw new Error('Invalid '+key+': pairing tokens are 43–128 letters, digits, "-" or "_". Paste the complete value from the pairing file.');
     }
     if(next.relayUrl)next.relayUrl=relayOrigin(next.relayUrl);
-    if(typeof next.hostId!=='string'||(next.hostId&&!/^[a-z0-9-]{1,64}$/.test(next.hostId)))throw new Error('Invalid host ID.');
+    if(typeof next.hostId!=='string'||(next.hostId&&!/^[a-z0-9-]{1,64}$/.test(next.hostId)))throw new Error('Invalid host ID: use the lowercase hostId from the pairing file (for example pc-…).');
     next.allowRemoteArm=next.allowRemoteArm===true;next.startAtLogin=next.startAtLogin===true;
     if(!Array.isArray(next.allowedApps))throw new Error('Invalid app list.');
     next.allowedApps=DEFAULT_APP_ALLOWLIST.filter(x=>next.allowedApps.includes(x));
