@@ -189,6 +189,28 @@ test('disconnect cancels pending work; a saved owner timer resumes only after a 
   await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.mode === 'armed');
 });
 
+test('host relay client reports why it is not connected: wrong token, duplicate host, unreachable relay', async t => {
+  const c = await provision();
+  const observe = (configuration, predicate) => new Promise(resolve => {
+    const client = new RelayClient({ getConfig: () => configuration, onCommand: async () => ({ ok: false }), onOwnerState: async () => ({ ok: false }) });
+    t.after(() => client.disconnect());
+    client.on('status', status => { if (predicate(status)) resolve(status); });
+    client.connect();
+  });
+  const wrong = await observe({ ...c, relayUrl: origin, hostToken: randomToken() }, s => s.reason && !['connecting', 'stopped'].includes(s.reason));
+  assert.equal(wrong.reason, 'unauthorized'); assert.equal(wrong.httpStatus, 401);
+  assert.equal(wrong.summary.label, 'Rejected by relay'); assert.ok(wrong.attempts >= 1); assert.ok(wrong.nextRetryAt > Date.now() - 100);
+  assert.equal(JSON.stringify(wrong).includes(c.hostToken), false);
+  const first = await observe({ ...c, relayUrl: origin }, s => s.authenticated);
+  assert.equal(first.summary.label, 'Securely connected'); assert.equal(first.attempts, 0); assert.ok(first.lastAuthenticatedAt);
+  const duplicate = await observe({ ...c, relayUrl: origin }, s => s.reason && !['connecting', 'stopped'].includes(s.reason));
+  assert.equal(duplicate.reason, 'host-already-connected'); assert.equal(duplicate.summary.label, 'Another copy is connected');
+  const unreachable = await observe({ ...c, relayUrl: 'http://127.0.0.1:9' }, s => s.reason && !['connecting', 'stopped'].includes(s.reason));
+  assert.equal(unreachable.reason, 'relay-unreachable'); assert.equal(unreachable.code, 'ECONNREFUSED');
+  const unconfigured = await observe({ relayUrl: '', hostId: '', hostToken: '' }, s => s.reason === 'setup-required');
+  assert.equal(unconfigured.summary.label, 'Not configured');
+});
+
 test('bot focus is a valid command; owner preview cannot restore foreground', async () => {
   const c = await provision();
   assert.equal((await command(c, 'focus')).body.error, 'host-offline');

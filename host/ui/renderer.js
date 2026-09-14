@@ -3,12 +3,25 @@ const fields=['relayUrl','hostId','hostToken','ownerToken','botToken'];
 function notice(text){byId('saveResult').textContent=text;}
 function checked(result){if(result?.ok===false)throw new Error(result.error||'Action failed');return result;}
 async function action(fn){try{return checked(await fn());}catch(e){notice(e.message);return null;}}
+let lastRelay={};
+function renderRelayDetail(){
+  const relay=lastRelay;let text=relay.summary?.detail||'';
+  if(!relay.authenticated&&Number.isFinite(relay.nextRetryAt)){
+    const seconds=Math.max(0,Math.ceil((relay.nextRetryAt-Date.now())/1000));
+    text+=' '+(seconds?'Next attempt in '+seconds+'s':'Reconnecting now')+(relay.attempts>1?' (attempt '+relay.attempts+')':'')+'.';
+  }
+  byId('relayDetail').textContent=text;
+}
+setInterval(()=>{if(lastRelay&&!lastRelay.authenticated&&Number.isFinite(lastRelay.nextRetryAt))renderRelayDetail();},1000);
 function render(status){
   const mode=status.mode||'off';byId('modeBadge').className='mode '+mode;byId('modeBadge').textContent=mode.toUpperCase();
   const titles={off:'Bot access is off',armed:'Waiting for an approved bot',running:'A bot is controlling this window',paused:'Bot access is paused'};
   byId('statusTitle').textContent=titles[mode]||mode;
   byId('statusDetail').textContent=status.stopLatched?'Local stop is locked. Unlock it here before remote arming.':status.expiresAt?'Access expires '+new Date(status.expiresAt).toLocaleTimeString()+'.':'Bot commands are rejected until you arm a session.';
-  byId('relayState').textContent=status.relay?.authenticated?'Securely connected':status.relay?.connected?'Authenticating':'Offline';
+  const relay=status.relay||{};lastRelay=relay;
+  byId('relayState').textContent=relay.summary?.label||(relay.authenticated?'Securely connected':relay.connected?'Authenticating':'Offline');
+  renderRelayDetail();
+  byId('helperDetail').textContent=status.helper?.ok===false?'Windows helper check failed: '+(status.helper.message||status.helper.error):'';
   byId('hostState').textContent=status.hostId||'Not configured';
   byId('recordingState').textContent=status.recording?'Recording selected window':'Stopped';
   byId('unlockButton').hidden=!status.stopLatched;
