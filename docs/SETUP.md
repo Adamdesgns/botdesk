@@ -2,6 +2,8 @@
 
 BotDesk is a local Windows build. The relay has not been deployed, and the package does not contain pairing credentials. A phone or bot on another network needs an approved HTTPS relay deployment before it can reach the PC.
 
+This is the reference. For the step-by-step path with expected screens see [QUICKSTART.md](QUICKSTART.md); for every error message and connection label see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 ## Build or open the Windows host
 
 From the BotDesk source directory:
@@ -59,7 +61,7 @@ node scripts/provision.mjs --relay https://YOUR-RELAY.workers.dev --out C:\YOUR-
 
 `--out` is required, its parent directory must exist, and the destination file must not already exist. The script grants the current Windows user access to the new pairing file, saves recovery credentials before contacting the relay, and prints only completion information and the file path. It does not print tokens. Confirm `provisioningStatus` is `complete` in the private file.
 
-If the response is interrupted, the file remains marked `pending`. Keep that recovery file and check whether its host ID was provisioned before creating another pairing. An existing host ID cannot be overwritten by calling provision again.
+Precondition problems print one sentence beginning `Provisioning did not start:`. If the relay rejected the request or could not be reached, the output begins `Provisioning failed:` and states that the relay stored nothing, so the pending file can be deleted. Only `Provisioning did not confirm completion:` (for example a timeout after the request was sent) is ambiguous: keep that recovery file and check whether its host ID connects before creating another pairing. An existing host ID cannot be overwritten by calling provision again.
 
 The file contains three different credentials:
 
@@ -73,7 +75,7 @@ The provisioning secret is separate from all three. Keep the complete pairing fi
 
 ## Prepare the PC once before leaving
 
-1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect. Leaving a token field blank keeps the last saved secret instead of wiping it.
+1. Open BotDesk, paste the host pairing JSON, choose **FILL PAIRING SETTINGS**, then **SAVE SETTINGS**. The host needs `relayUrl`, `hostId`, `hostToken`, and `ownerToken`; it does not require `botToken` to connect. Leaving a token field blank keeps the last saved secret instead of wiping it. The import step warns if the file is still `pending` or lacks the host fields, and saving rejects tokens shorter than the relay's 43-character minimum. The Connection card should read **Securely connected**; any other label is explained in [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 2. Open the app the bot should use. In BotDesk, choose **REFRESH WINDOWS** and select that app under **APPROVED WINDOW**. The default allowed apps are Edge, Chrome, Firefox, and Notepad.
 3. Enable **Allow remote arming while BotDesk is running** and save. Local **GO LIVE — 8 HOURS** also enables remote arming. The host checks the selected window when access starts and attempts to bring it forward.
 4. Use **COPY PHONE LINK** and save the private link for yourself. It contains the owner credential after `#`.
@@ -122,3 +124,7 @@ A reconnect never extends the authorized end time. A saved owner window permits 
 Use **SHOW SCREEN** for an on-demand phone preview of the guarded selected window. The bot can also request a snapshot or screenshot while live.
 
 Bot recordings are local WebM files built from guarded selected-window captures, at up to one frame per second, without audio. They are not smooth full-desktop video. Use **OPEN RECORDINGS** in the host to open its application-data `captures` folder. Recordings are not uploaded to the relay automatically. Audit records are stored in the host's application-data `logs` folder.
+
+## Diagnostics
+
+**COPY DIAGNOSTIC REPORT** in the host's Connection card re-runs the Windows helper check, copies a JSON report to the clipboard and saves it under `logs\diagnostic-<time>.txt`. The report lists versions, prerequisite results, which credential fields are saved (never their values), relay connection state with reason and retry timing, session state, the approved app's process name, the last 20 audit outcomes, and a list of detected blockers. Known secrets, `dpapi:` blobs, bearer values, URL fragments, token-shaped strings and the home folder are redacted; window titles and typed text are never collected. Startup failures are written to `logs\startup-errors.log`.

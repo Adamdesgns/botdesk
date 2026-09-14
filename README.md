@@ -4,7 +4,7 @@ A free Windows companion for Grok bot owners using a compatible tool runner.
 
 Let approved bots operate one selected app window on your Windows PC while you are away. Use your private phone dashboard to go live now, set a countdown, schedule a dated window such as **6 AM to 6 PM**, pause access, or turn it off.
 
-**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
+**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See the [quick start](docs/QUICKSTART.md), [troubleshooting](docs/TROUBLESHOOTING.md), [setup reference](docs/SETUP.md), [setup audit](docs/setup-audit.md), [verification](docs/VERIFICATION.md), and [security boundaries](docs/SECURITY.md). Owner-facing text calls the product **Bot Door**; the code, package and window title still say BotDesk.
 
 ## Owner controls
 
@@ -35,6 +35,8 @@ node scripts/desktop-smoke.mjs --packaged
 ```
 
 The Windows portable build is `dist/BotDesk-0.1.0-portable.exe`. This development build is unsigned. Pairing secrets stay outside the repository and are encrypted by Windows when saved in the host.
+
+The host's Connection card names the reason it is not connected (rejected token, another copy connected, relay unreachable, and so on), runs a compile-only check of the Windows helper, and **COPY DIAGNOSTIC REPORT** produces a redacted report for support. Startup failures are shown in a dialog and written to `logs/startup-errors.log`.
 
 Closing BotDesk's window hides it to the tray; Quit BotDesk ends the host. Automatic startup is optional and is not enabled by this build process.
 
