@@ -39,6 +39,11 @@ byId('stopButton').onclick=()=>action(()=>window.botdesk.emergencyStop());
 byId('unlockButton').onclick=()=>action(()=>window.botdesk.clearStop());
 byId('copyOwnerLink').onclick=async()=>{if(await action(()=>window.botdesk.copyOwnerLink()))notice('Private phone link copied. Share only with your own phone.');};
 byId('openCaptures').onclick=()=>action(()=>window.botdesk.openCaptures());
+byId('copyDiagnostics').onclick=async()=>{
+  const button=byId('copyDiagnostics');button.disabled=true;notice('Checking prerequisites and building the report…');
+  try{const r=await action(()=>window.botdesk.diagnosticReport());if(r)notice('Redacted diagnostic report copied to the clipboard and saved to '+r.path+'. Tokens are never included.');}
+  finally{button.disabled=false;}
+};
 byId('refreshWindows').onclick=async()=>{
   const r=await action(()=>window.botdesk.listWindows());if(!r)return;
   byId('targetWindow').replaceChildren(new Option('Choose an app window',''));
@@ -49,7 +54,11 @@ byId('targetWindow').onchange=()=>action(()=>window.botdesk.selectWindow(byId('t
 byId('importPairing').onclick=()=>{
   try{const parsed=JSON.parse(byId('pairingJson').value);const config=parsed.config||parsed.hostConfig||parsed;
     for(const id of fields)if(typeof config[id]==='string')byId(id).value=config[id];
-    byId('pairingJson').value='';notice('Pairing fields filled. Save settings next.');
+    byId('pairingJson').value='';
+    const missing=['relayUrl','hostId','hostToken','ownerToken'].filter(id=>!byId(id).value.trim());
+    if(typeof config.provisioningStatus==='string'&&config.provisioningStatus!=='complete')notice('This pairing file is marked "'+config.provisioningStatus+'": provisioning did not finish, so the relay will reject this PC (Rejected by relay). Provision again and paste the completed file.');
+    else if(missing.length)notice('Pairing fields filled, but this PC also needs: '+missing.join(', ')+'. A bot-only configuration is not enough for the host.');
+    else notice('Pairing fields filled. Save settings next.');
   }catch{notice('Paste the host config JSON from the private provisioning file.');}
 };
 byId('saveButton').onclick=async()=>{

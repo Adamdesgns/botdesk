@@ -1,4 +1,6 @@
-import {app,BrowserWindow,globalShortcut,ipcMain,screen,session,safeStorage,Tray,Menu,nativeImage,shell,clipboard,powerMonitor} from 'electron';
+import {app,BrowserWindow,dialog,globalShortcut,ipcMain,screen,session,safeStorage,Tray,Menu,nativeImage,shell,clipboard,powerMonitor} from 'electron';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {AuditLog} from './audit-log.mjs';
@@ -7,14 +9,31 @@ import {HostController} from './controller.mjs';
 import {DesktopExecutor} from './executor.mjs';
 import {RelayClient} from './relay-client.mjs';
 import {RecordingService} from './recording.mjs';
-import {listWindows,focus} from './windows.mjs';
+import {listWindows,focus,helperSelfTest,describeHelperError,helperPath} from './windows.mjs';
 import {classifyWindow,DEFAULT_APP_ALLOWLIST} from './guard.mjs';
+import {readRecentAudit,renderDiagnosticReport} from './diagnostics.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url));
 let mainWindow,overlayWindow,controller,configStore,recorder,tray,quitting=false;
 let choices=[];let quitReady=false;let quitPending=false;
+let helperStatus=null;const prerequisites={credentialEncryption:null,emergencyShortcutRegistered:null};
 if(process.env.BOTDESK_TEST_DATA)app.setPath('userData',process.env.BOTDESK_TEST_DATA);
-if(!app.requestSingleInstanceLock())app.quit();
+const primaryInstance=app.requestSingleInstanceLock();
+if(!primaryInstance)app.quit();
 app.on('second-instance',()=>{mainWindow?.show();mainWindow?.focus();});
+// The portable build has no console: a startup failure must be visible and leave a local trace.
+function startupFailure(message){
+  console.error('BotDesk startup failed:',message);
+  try{const logs=path.join(app.getPath('userData'),'logs');fs.mkdirSync(logs,{recursive:true});
+    fs.appendFileSync(path.join(logs,'startup-errors.log'),new Date().toISOString()+' '+message+'\n');}catch{/* the data folder itself may be unusable */}
+  try{if(!process.env.BOTDESK_TEST_DATA)dialog.showErrorBox('Bot Door could not start',message+'\n\nBot Door will close. See docs/TROUBLESHOOTING.md.');}catch{/* no display available */}
+  quitting=true;app.quit();
+}
+const decorate=status=>({...status,helper:helperStatus});
+async function refreshHelperStatus(timeoutMs){
+  helperStatus=await helperSelfTest({timeoutMs});
+  if(controller&&!quitting)send('status',decorate(controller.getStatus()));
+  return helperStatus;
+}
 function safeSend(window,event,value){
   if(!window||window.isDestroyed()||window.webContents.isDestroyed())return;
   try{
@@ -41,10 +60,24 @@ function handle(name,fn,{allowOverlay=false}={}){
   });
 }
 function installIpc(){
-  handle('get-state',()=>({status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()}));
+  handle('get-state',()=>({status:decorate(controller.getStatus()),config:configStore.publicView(),version:app.getVersion()}));
   handle('windows',async()=>{const result=await listWindows();
     choices=(result.windows||[]).filter(w=>classifyWindow(w).allowed&&DEFAULT_APP_ALLOWLIST.includes(w.processName.toLowerCase()));
-    return {ok:result.ok,windows:choices,error:result.error};});
+    if(!result.ok&&helperStatus?.ok!==false)refreshHelperStatus(20000).catch(()=>{});
+    return {ok:result.ok,windows:choices,error:result.ok?undefined:describeHelperError(result.error)};});
+  handle('diagnostic-report',async()=>{
+    const helper=await refreshHelperStatus(20000);
+    const userData=app.getPath('userData');const logs=path.join(userData,'logs');
+    const text=renderDiagnosticReport({
+      app:{version:app.getVersion(),packaged:app.isPackaged,portable:Boolean(process.env.PORTABLE_EXECUTABLE_FILE),background:process.argv.includes('--background'),
+        electron:process.versions.electron,chrome:process.versions.chrome,node:process.versions.node,platform:process.platform,release:os.release(),arch:process.arch,locale:app.getLocale()},
+      config:configStore.load(),status:controller.getStatus(),helper,audit:readRecentAudit(logs,20),prerequisites,
+      paths:{userData,helper:helperPath,home:app.getPath('home'),configFileExists:fs.existsSync(path.join(userData,'config.json'))}});
+    fs.mkdirSync(logs,{recursive:true});
+    const file=path.join(logs,'diagnostic-'+new Date().toISOString().replace(/[:.]/g,'-')+'.txt');
+    fs.writeFileSync(file,text,{mode:0o600});clipboard.writeText(text);
+    return {ok:true,path:file,bytes:Buffer.byteLength(text)};
+  });
   handle('select-window',handle=>{
     const target=choices.find(w=>w.handle===handle);if(!target)throw new Error('Refresh and choose an available window.');
     controller.selectTarget(target);return {ok:true,status:controller.getStatus()};
@@ -61,7 +94,7 @@ function installIpc(){
     if(controller.stopLatched)throw new Error('Unlock the local stop first.');
     const epoch=controller.epoch;
     const focused=await focus({expectedWindow:controller.targetWindow});
-    if(!focused.ok)throw new Error(focused.error);
+    if(!focused.ok)throw new Error(describeHelperError(focused.error));
     if(epoch!==controller.epoch)throw new Error('Arming was cancelled.');
     configStore.save({allowRemoteArm:true});
     send('status',controller.getStatus());
@@ -91,7 +124,9 @@ function installIpc(){
   handle('show',()=>{mainWindow.show();mainWindow.focus();return {ok:true};},{allowOverlay:true});
 }
 app.whenReady().then(()=>{
-  if(!safeStorage.isEncryptionAvailable())throw new Error('Windows credential encryption is unavailable.');
+  if(!primaryInstance)return;
+  prerequisites.credentialEncryption=safeStorage.isEncryptionAvailable();
+  if(!prerequisites.credentialEncryption)throw new Error('Windows credential encryption (DPAPI) is unavailable, so pairing tokens cannot be stored safely. Sign in with an ordinary Windows user account on this PC and start Bot Door again.');
   configStore=new ConfigStore(path.join(app.getPath('userData'),'config.json'),{
     encrypt:text=>safeStorage.encryptString(text),decrypt:data=>safeStorage.decryptString(data)});
   recorder=new RecordingService({directory:path.join(app.getPath('userData'),'captures'),send});
@@ -111,7 +146,7 @@ app.whenReady().then(()=>{
   controller.on('status',status=>{
     if(quitting||overlayWindow.isDestroyed())return;
     if(['armed','running'].includes(status.mode))overlayWindow.showInactive();else overlayWindow.hide();
-    send('status',status);safeSend(overlayWindow,'status',status);
+    send('status',decorate(status));safeSend(overlayWindow,'status',status);
   });
   session.defaultSession.setPermissionRequestHandler((_wc,_permission,callback)=>callback(false));
   session.defaultSession.setPermissionCheckHandler(()=>false);
@@ -122,12 +157,15 @@ app.whenReady().then(()=>{
     {label:'STOP BOT ACCESS',click:()=>controller.emergencyStop('tray-stop')},
     {type:'separator'},{label:'Quit BotDesk',click:()=>app.quit()}]));
   tray.on('double-click',()=>mainWindow.show());
-  if(!globalShortcut.register('CommandOrControl+Shift+F12',()=>controller.emergencyStop()))throw new Error('Emergency stop shortcut could not be registered.');
+  prerequisites.emergencyShortcutRegistered=globalShortcut.register('CommandOrControl+Shift+F12',()=>controller.emergencyStop());
+  if(!prerequisites.emergencyShortcutRegistered)throw new Error('The emergency stop shortcut Ctrl+Shift+F12 could not be registered because another program already uses it. Close or reconfigure that program, then start Bot Door again. Bot Door does not run without a working emergency stop.');
   powerMonitor.on('lock-screen',()=>controller.emergencyStop('windows-locked'));
   powerMonitor.on('suspend',()=>controller.emergencyStop('windows-suspended'));
   relay.connect();
   if(process.argv.includes('--background'))mainWindow.hide();
-}).catch(error=>{console.error('BotDesk startup failed:',error.message);quitting=true;app.quit();});
+  // Compile-only prerequisite check; it reads no input and touches no window.
+  setTimeout(()=>{if(!quitting)refreshHelperStatus(30000).catch(()=>{});},1500);
+}).catch(error=>startupFailure(error.message));
 app.on('before-quit',event=>{
   if(quitReady)return;
   if(quitPending){event.preventDefault();return;}

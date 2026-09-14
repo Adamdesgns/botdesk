@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('botdesk',{
   selectWindow:handle=>ipcRenderer.invoke('botdesk:select-window',handle),
   openCaptures:()=>ipcRenderer.invoke('botdesk:captures'),
   copyOwnerLink:()=>ipcRenderer.invoke('botdesk:copy-owner-link'),
+  diagnosticReport:()=>ipcRenderer.invoke('botdesk:diagnostic-report'),
   showMain:()=>ipcRenderer.invoke('botdesk:show'),
   recordingChunk:chunk=>ipcRenderer.invoke('botdesk:record-chunk',chunk),
   recordingDone:id=>ipcRenderer.invoke('botdesk:record-done',id),
