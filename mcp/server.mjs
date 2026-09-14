@@ -87,6 +87,45 @@ async function boundedJson(response) {
   try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw new Error('Relay returned invalid JSON.'); }
 }
 
+// Bot-facing hints for relay/host error codes. The code itself is kept so logs stay searchable.
+const ERROR_HINTS = {
+  unauthorized: 'The relay rejected BOTDESK_BOT_TOKEN for BOTDESK_HOST_ID. Use the botToken from the completed pairing file (never the host or owner token) and check the host ID matches.',
+  'host-offline': 'The Windows PC is not connected to the relay. The owner must have Bot Door running and showing "Securely connected".',
+  'not-armed': 'Bot access is OFF or paused on this PC. Wait for the owner to GO LIVE or for the scheduled window to start; botdesk_status shows the current mode.',
+  'bot-lease-held': 'Another bot ID holds the control lease for this PC. Wait up to 60 seconds for it to lapse or stop the other client.',
+  'host-busy': 'One command runs at a time and the previous one has not finished. Retry after a short pause; commands are never queued.',
+  'command-timeout': 'The PC did not answer within 20 seconds. Do not assume the action happened; take a fresh screenshot before acting again.',
+  'command-cancelled': 'The owner stopped or paused access, or the session changed, while this command ran.',
+  'stale-session': 'The owner session changed since your last capture. Take a fresh screenshot and try again.',
+  'fresh-snapshot-required': 'Inputs need a snapshotId from a screenshot or snapshot taken within the last 15 seconds by this bot. Capture again first.',
+  'window-moved-retake-snapshot': 'The approved window moved, resized or changed title since the capture. Capture again and re-read coordinates.',
+  'target-changed': 'The approved window is no longer in the foreground on the PC. Call botdesk_focus, then capture again.',
+  'focus-refused': 'Windows refused to bring the approved window forward. Only the owner can click it on the PC.',
+  'target-required': 'The owner has not selected an approved window in Bot Door yet.',
+  expired: 'The armed session has ended. Ask the owner to GO LIVE again.',
+  'session-expired': 'The armed session has ended. Ask the owner to GO LIVE again.',
+  'request-rate-limit': 'Too many requests reached the relay recently. Slow down and retry later.',
+  'request-replayed': 'This request ID was already used; the adapter generates fresh IDs, so retry once.',
+  credential: 'Bot Door blocks sign-in, password and credential windows. Ask the owner to switch the approved window to ordinary content.',
+  financial: 'Bot Door blocks financial windows. This content is off-limits.',
+  system: 'Bot Door blocks Windows security, shell and system tool windows. This content is off-limits.',
+  'app-blocked': 'The foreground app is not on the owner\'s allowlist (Edge, Chrome, Firefox, Notepad by default).'
+};
+export function describeRelayError(code, message = '') {
+  const clean = String(code || '').slice(0, 160);
+  const text = String(message || clean || 'BotDesk command failed.').slice(0, 500);
+  const hint = ERROR_HINTS[clean];
+  if (!hint) return text;
+  return text.includes(clean) ? `${text} — ${hint}` : `${text} (${clean}) — ${hint}`;
+}
+function describeNetworkError(error) {
+  if (error?.name === 'AbortError') throw error;
+  const cause = error?.cause;
+  const code = String(cause?.code || cause?.errors?.find((item) => item?.code)?.code || cause?.message || error?.message || 'network-error').replace(/[^A-Za-z0-9_ ]/g, '').trim().slice(0, 40);
+  const hint = code === 'ECONNREFUSED' ? 'Nothing is listening at BOTDESK_RELAY_URL.' : code === 'ENOTFOUND' ? 'The relay hostname does not resolve; check BOTDESK_RELAY_URL.' : /CERT|TLS|SSL/i.test(code) ? 'The relay TLS certificate could not be verified.' : 'Check BOTDESK_RELAY_URL and network access.';
+  return new Error(`BotDesk relay unreachable (${code}). ${hint}`);
+}
+
 export function createRelayClient(config, fetchImpl = fetch) {
   const connection = validateRelayConfig(config);
   return async function relayCall(toolName, args = {}) {
@@ -97,12 +136,15 @@ export function createRelayClient(config, fetchImpl = fetch) {
     let timeout;
     try {
       const operation = (async () => {
-        const response = await fetchImpl(`${connection.relayUrl}/api/bot/${connection.hostId}/command`, {
-          method: 'POST', redirect: 'error', signal: aborter.signal,
-          headers: { authorization: `Bearer ${connection.botToken}`, 'content-type': 'application/json', 'x-bot-id': connection.botId, 'x-request-id': randomUUID() }, body
-        });
+        let response;
+        try {
+          response = await fetchImpl(`${connection.relayUrl}/api/bot/${connection.hostId}/command`, {
+            method: 'POST', redirect: 'error', signal: aborter.signal,
+            headers: { authorization: `Bearer ${connection.botToken}`, 'content-type': 'application/json', 'x-bot-id': connection.botId, 'x-request-id': randomUUID() }, body
+          });
+        } catch (error) { throw describeNetworkError(error); }
         const payload = await boundedJson(response);
-        if (!response.ok) throw new Error(String(payload?.message || payload?.error || `BotDesk relay returned ${response.status}`).slice(0, 1000));
+        if (!response.ok) throw new Error(describeRelayError(payload?.error || `HTTP ${response.status}`, payload?.message || payload?.error || `BotDesk relay returned ${response.status}`));
         if (!payload || typeof payload !== 'object' || payload.ok !== true || !Object.hasOwn(payload, 'result')) throw new Error('Relay returned an invalid command result.');
         return payload.result;
       })();
@@ -155,7 +197,13 @@ export async function startServer() {
     }
   });
   await server.connect(new StdioServerTransport());
-  console.error('[botdesk-mcp] ready');
+  // Tools stay listed even when misconfigured so the bot receives the same message on every call.
+  try {
+    const connection = validateRelayConfig({ relayUrl: process.env.BOTDESK_RELAY_URL, hostId: process.env.BOTDESK_HOST_ID, botToken: process.env.BOTDESK_BOT_TOKEN, botId: process.env.BOTDESK_BOT_ID });
+    console.error(`[botdesk-mcp] ready (relay ${connection.relayUrl}, host ${connection.hostId}, bot id ${connection.botId})`);
+  } catch (error) {
+    console.error(`[botdesk-mcp] ready, but not configured: ${error.message} Every tool call will return this error until the MCP env is fixed.`);
+  }
   return server;
 }
 

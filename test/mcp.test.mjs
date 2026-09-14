@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { TOOL_DEFS, createRelayClient, toolContent, validateRelayConfig, validateToolArgs } from '../mcp/server.mjs';
+import { TOOL_DEFS, createRelayClient, describeRelayError, toolContent, validateRelayConfig, validateToolArgs } from '../mcp/server.mjs';
 import { COMMANDS, clampArmMinutes } from '../shared/protocol.mjs';
 import { runMcpSmoke } from '../scripts/mcp-smoke.mjs';
 
@@ -85,6 +85,22 @@ test('relay requests disable redirects and bound errors, malformed bodies and ad
   await assert.rejects(createRelayClient(config, async () => Response.json({ result: {} }))('botdesk_status'), /invalid command result/);
   await assert.rejects(createRelayClient(config, async () => new Response('x', { headers: { 'content-length': 20 * 1024 * 1024 } }))('botdesk_status'), /size limit/);
   await assert.rejects(createRelayClient(config, async () => new Response(new Uint8Array(12 * 1024 * 1024 + 1)))('botdesk_status'), /size limit/);
+});
+
+test('relay error codes reach the bot with the code intact plus a next step; network failures name the cause', async () => {
+  for (const code of ['unauthorized', 'host-offline', 'not-armed', 'bot-lease-held', 'host-busy', 'command-timeout', 'fresh-snapshot-required', 'target-changed', 'credential']) {
+    const text = describeRelayError(code);
+    assert.ok(text.startsWith(code + ' — '), text);
+    assert.ok(text.length > code.length + 30, text);
+  }
+  assert.equal(describeRelayError('brand-new-code'), 'brand-new-code');
+  assert.equal(describeRelayError('target-changed', 'The approved window must remain in the foreground.'), 'The approved window must remain in the foreground. (target-changed) — ' + describeRelayError('target-changed').slice('target-changed — '.length));
+  await assert.rejects(createRelayClient(config, async () => Response.json({ error: 'unauthorized' }, { status: 401 }))('botdesk_status'), /^Error: unauthorized — .*botToken/);
+  await assert.rejects(createRelayClient(config, async () => Response.json({ error: 'host-offline' }, { status: 503 }))('botdesk_screenshot'), /host-offline — The Windows PC is not connected/);
+  const refused = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:8787'), { code: 'ECONNREFUSED' }) });
+  await assert.rejects(createRelayClient(config, async () => { throw refused; })('botdesk_status'), /relay unreachable \(ECONNREFUSED\)\. Nothing is listening/);
+  const dns = Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ENOTFOUND relay.invalid'), { code: 'ENOTFOUND' }) });
+  await assert.rejects(createRelayClient(config, async () => { throw dns; })('botdesk_status'), (error) => /ENOTFOUND/.test(error.message) && !error.message.includes('relay.invalid'));
 });
 
 test('deadline aborts both fetch and slow response-body reads', async () => {
