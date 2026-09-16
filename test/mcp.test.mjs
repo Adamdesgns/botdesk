@@ -58,7 +58,7 @@ test('fresh snapshot id and bounded inputs are required before HTTP call', async
     ['type', { snapshotId: 'a', text: '\u001b' }], ['type', { snapshotId: 'a', text: 'a'.repeat(4001) }],
     ['type', { snapshotId: 'a', text: 'javascript:alert(1)' }], ['type', { snapshotId: 'a', text: '\t' }],
     ['status', { script: 'shell command' }], ['screenshot', { maxWidth: 100 }],
-    ['focus', { handle: '1001' }], ['list_monitors', { allDesktops: true }]
+    ['focus', { handle: '1001' }], ['focus', { snapshotId: 'a' }], ['list_monitors', { allDesktops: true }]
   ]) await assert.rejects(call(`botdesk_${name}`, args), (error) => !error.message.includes('Network must not'));
   assert.equal(validateToolArgs('botdesk_click', { snapshotId: 'fresh', x: 0, y: 0 }), 'click');
   assert.equal(validateToolArgs('botdesk_key', { snapshotId: 'fresh', key: 'CTRL+V' }), 'key');

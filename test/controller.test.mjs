@@ -14,6 +14,7 @@ function setup(t, config = {}) {
   const settings = { allowRemoteArm: false, allowedApps: ['msedge'], ...config };
   const executor = {
     foreground: async () => structuredClone(foreground),
+    focus: async (targetWindow, options) => { calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options }); return { ok: true, window: structuredClone(targetWindow) }; },
     run: async (name, args, options) => { calls.push({ name, args, options }); return { ok: true, window: structuredClone(foreground) }; },
     recordStart: async () => ({ ok: true }),
     recordStop: async () => ({ ok: true, recording: false })
@@ -189,6 +190,7 @@ test('moving the target or changing its page title invalidates the captured coor
   const next = await s.capture(); s.changeWindow({ title: 'A different ordinary page' });
   assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: next, x: 20, y: 30 }))).error, 'window-moved-retake-snapshot');
 });
+
 
 test('approved target and password detection remain guards even with a fresh snapshot', async (t) => {
   const s = setup(t); s.arm(); const snapshotId = await s.capture();

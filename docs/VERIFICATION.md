@@ -16,6 +16,10 @@ This is a development baseline. The relay has not been deployed or paired, and r
 
 Screenshots shown in the README come from synthetic first-run and phone dashboard fixtures. They do not show a live pairing. Raw desktop captures, local reports, process identifiers and machine paths are excluded from publication.
 
+## This change (focus + empty-save)
+
+Automated host, guard, config, MCP stdio and local Miniflare relay tests cover `botdesk_focus` (restore only the stored HWND/PID; fail closed on `focus-refused`) and blank Save Settings leaving prior pairing secrets. Linux CI imports `relay/src/policy.ts` with Node's `--experimental-strip-types` flag; native helper compile remains Windows-only and is skipped here. These tests do not call real `SetForegroundWindow` or prove an HTTPS phone/bot pilot. Confirm on a signed-in Windows desktop: arm → steal focus → `botdesk_focus` → screenshot/click works again; Save with a blank bot token leaves the prior token.
+
 ## Reproduce
 
 Run from a Windows clone after installing dependencies:
@@ -39,7 +43,7 @@ Use a normal user execution environment for GUI verification. A restricted sandb
 ## Remaining pilot checks
 
 1. Deploy and privately provision an HTTPS relay, then pair one prepared host and owner phone.
-2. Test one bot tool runner and a dedicated browser profile: click/scroll coordinates, focus changes, locked-screen behavior, actual recording and cancellation.
+2. Test one bot tool runner and a dedicated browser profile: click/scroll coordinates, `botdesk_focus` after another window steals foreground, locked-screen behavior, actual recording and cancellation.
 3. Verify a real phone from another network: schedule, STOP, disconnect/reconnect and expiry with the phone page closed.
 4. Verify installation and behavior on a clean Windows account/device. The local portable build is unsigned.
 
