@@ -10,6 +10,28 @@ import { redactClipboard } from '../host/executor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+/**
+ * Locate a real POSIX bash. On Windows, `bash` on PATH is often the WSL stub,
+ * which exits 1 with "no installed distributions" and cannot run the wrapper.
+ */
+function findBash() {
+  const candidates = [process.env.BOTDESK_TEST_BASH].filter(Boolean);
+  if (process.platform === 'win32') {
+    for (const base of [process.env['ProgramFiles'], process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')]) {
+      if (!base) continue;
+      candidates.push(path.join(base, 'Git', 'bin', 'bash.exe'), path.join(base, 'Git', 'usr', 'bin', 'bash.exe'));
+    }
+  } else {
+    candidates.push('bash');
+  }
+  for (const candidate of candidates) {
+    if (candidate !== 'bash' && !fs.existsSync(candidate)) continue;
+    const probe = spawnSync(candidate, ['-c', 'echo ok'], { encoding: 'utf8' });
+    if (probe.status === 0 && probe.stdout.trim() === 'ok') return candidate;
+  }
+  return null;
+}
+
 test('credential doctor reports presence only and never echoes token values', (t) => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'botdesk-doctor-'));
   t.after(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -39,6 +61,11 @@ test('credential doctor reports presence only and never echoes token values', (t
 });
 
 test('env-first MCP wrapper prefers env, falls back to file, and exits 2 on credential-missing', (t) => {
+  const bash = findBash();
+  if (!bash) {
+    t.skip('no usable POSIX bash on this machine (Windows WSL stub without a distribution does not count)');
+    return;
+  }
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'botdesk-wrapper-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const adapter = path.join(directory, 'adapter.mjs');
@@ -46,13 +73,13 @@ test('env-first MCP wrapper prefers env, falls back to file, and exits 2 on cred
   fs.writeFileSync(adapter, 'console.log(process.env.BOTDESK_BOT_TOKEN);\n');
   const wrapper = path.join(root, 'mcp/run-with-secret.sh');
   const env = { PATH: process.env.PATH, HOME: directory };
-  const missing = spawnSync('bash', [wrapper], { env: { ...env, BOTDESK_ADAPTER_PATH: adapter }, encoding: 'utf8' });
+  const missing = spawnSync(bash, [wrapper], { env: { ...env, BOTDESK_ADAPTER_PATH: adapter }, encoding: 'utf8' });
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /credential-missing/);
   assert.doesNotMatch(missing.stderr, /super-secret|bot-token-/);
 
   fs.writeFileSync(secrets, JSON.stringify({ secrets: { BOTDESK_BOT_TOKEN: 'file-token-should-not-win-over-env-123' } }));
-  const fromEnv = spawnSync('bash', [wrapper], {
+  const fromEnv = spawnSync(bash, [wrapper], {
     env: {
       ...env,
       BOTDESK_ADAPTER_PATH: adapter,
@@ -66,7 +93,7 @@ test('env-first MCP wrapper prefers env, falls back to file, and exits 2 on cred
   assert.equal(fromEnv.status, 0, fromEnv.stderr);
   assert.equal(fromEnv.stdout.trim(), 'env-token-wins-over-file-456');
 
-  const fromFile = spawnSync('bash', [wrapper], {
+  const fromFile = spawnSync(bash, [wrapper], {
     env: {
       ...env,
       BOTDESK_ADAPTER_PATH: adapter,
