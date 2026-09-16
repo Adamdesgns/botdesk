@@ -29,7 +29,7 @@ Keep Windows awake and unlocked. Use **Go live — 8 hours** or the phone schedu
 
 BotDesk is independent software, not an official xAI product. It does not sign into Grok or add tools to the standard Grok chat. Your bot runner must be able to launch the included MCP adapter.
 
-The MCP adapter exposes eleven tools: status, screenshot, accessible-page snapshot, target-window information, click, type, limited key presses, scroll, recording start/stop, and stop all. MCP is the standard interface that lets a bot call these tools. Only one bot can operate the selected window at a time.
+The MCP adapter exposes twelve tools over stdio using the official MCP SDK: status, screenshot, accessible-page snapshot, target-window information, guarded focus of the already-approved window, click, type, limited key presses, scroll, recording start/stop, and stop all. Dynamic MCP is not supported. Only one bot can operate the selected window at a time. After arm, if another window takes the foreground, `botdesk_focus` asks Windows to restore that same HWND/PID only; it never picks a different window, and it fails closed if Windows refuses.
 
 Input needs a fresh screenshot or snapshot. The host checks the target, process, Windows permissions, sensitive content signals, session deadline and command identity before acting. Screenshots capture only the selected window. Local WebM recordings use guarded snapshots at roughly one frame per second, without audio; they are suitable for test evidence, not smooth promotional footage.
 

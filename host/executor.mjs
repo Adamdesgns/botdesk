@@ -1,6 +1,6 @@
 import * as native from './windows.mjs';
 
-function redactClipboard(text) {
+export function redactClipboard(text) {
   if (typeof text !== 'string') return { text: '', redacted: true, reason: 'invalid' };
   const secretLike = /(sk-[A-Za-z0-9]{10,}|ghp_[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|Bearer\s+[A-Za-z0-9._~+/=-]{16,}|password\s*[:=]\s*\S+)/i;
   if (secretLike.test(text) || /^[A-Za-z0-9_-]{43,128}$/.test(text.trim())) {

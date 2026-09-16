@@ -13,9 +13,12 @@ read_secret_file() {
   if [[ ! -f "$file" ]]; then
     return 1
   fi
-  # Prefer python for reliable JSON; fall back to node.
+  # Prefer python for reliable JSON; fall back to node. Each reader is tried in
+  # turn because a present-but-broken interpreter (for example the Windows Store
+  # `python3` alias stub) must not mask a working fallback.
+  local value
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$file" "$key" <<'PY'
+    if value="$(python3 - "$file" "$key" 2>/dev/null <<'PY'
 import json,sys
 path,key=sys.argv[1],sys.argv[2]
 try:
@@ -30,11 +33,16 @@ if not isinstance(value,str) or not value.strip():
   sys.exit(1)
 print(value,end="")
 PY
-    return $?
+)" && [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
   fi
   if command -v node >/dev/null 2>&1; then
-    node -e 'const fs=require("fs");const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const v=d&&d.secrets&&d.secrets[process.argv[2]];if(typeof v!=="string"||!v.trim())process.exit(1);process.stdout.write(v);' "$file" "$key"
-    return $?
+    if value="$(node -e 'const fs=require("fs");let d;try{d=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));}catch{process.exit(1);}const v=d&&d.secrets&&d.secrets[process.argv[2]];if(typeof v!=="string"||!v.trim())process.exit(1);process.stdout.write(v);' "$file" "$key" 2>/dev/null)" && [[ -n "$value" ]]; then
+      printf '%s' "$value"
+      return 0
+    fi
   fi
   return 1
 }

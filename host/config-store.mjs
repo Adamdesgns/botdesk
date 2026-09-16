@@ -31,8 +31,10 @@ export class ConfigStore{
     const old=this.load(),next={...old};
     for(const key of Object.keys(DEFAULTS))if(Object.hasOwn(update,key))next[key]=update[key];
     for(const key of SECRETS){
-      if(next[key]==='saved')next[key]=old[key];
-      if(typeof next[key]!=='string'||(next[key]&&!/^[A-Za-z0-9_-]{32,128}$/.test(next[key])))throw new Error('Invalid pairing token.');
+      if(typeof next[key]!=='string')throw new Error('Invalid pairing token.');
+      const incoming=next[key].trim();
+      next[key]=incoming==='saved'||incoming===''?old[key]:incoming;
+      if(next[key]&&!/^[A-Za-z0-9_-]{32,128}$/.test(next[key]))throw new Error('Invalid pairing token.');
     }
     if(next.relayUrl)next.relayUrl=relayOrigin(next.relayUrl);
     if(typeof next.hostId!=='string'||(next.hostId&&!/^[a-z0-9-]{1,64}$/.test(next.hostId)))throw new Error('Invalid host ID.');

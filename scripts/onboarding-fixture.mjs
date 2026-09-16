@@ -26,7 +26,10 @@ app.whenReady().then(async () => {
   handle('get-state', () => ({ status: currentStatus(), config: publicConfig(), version: '0.1.0-synthetic' }));
   handle('save-config', async (input) => {
     if (holdNextSave) { holdNextSave = false; await new Promise((resolve) => { heldSave = resolve; }); }
-    config = { ...config, ...input, ...Object.fromEntries(['hostToken', 'ownerToken', 'botToken'].map((key) => [key, input[key] === 'saved' ? config[key] : input[key] || ''])) };
+    config = { ...config, ...input, ...Object.fromEntries(['hostToken', 'ownerToken', 'botToken'].map((key) => {
+      const incoming = typeof input[key] === 'string' ? input[key].trim() : '';
+      return [key, incoming === 'saved' || incoming === '' ? config[key] : incoming];
+    })) };
     counts.saved++;
     const paired = Boolean(config.relayUrl && config.hostId && config.hostToken && config.ownerToken);
     status = { ...status, hostId: config.hostId || null, relay: { connected: paired, authenticated: paired } };
