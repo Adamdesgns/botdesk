@@ -28,7 +28,7 @@ node scripts/credential-doctor.mjs
 
 ### Host (AlienAdam)
 
-1. Launch the portable host **outside Codex** when possible so userData is `%LOCALAPPDATA%\BotDesk`.
+1. Launch the host **outside Codex** when possible so userData is `%LOCALAPPDATA%\BotDesk`. If `dist\BotDesk-0.1.0-portable.exe` is unavailable, use `dist\win-unpacked\BotDesk.exe` built from **`ac8a3b1`**. That host build does not refresh the MCP adapter or relay.
 2. If only the Codex-virtualized pairing exists, re-import that pairing JSON into the active host (owner UI paste). Do not print tokens into chat.
 3. Keep STOP/OFF until credentials and target are confirmed.
 

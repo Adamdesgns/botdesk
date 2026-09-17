@@ -14,6 +14,8 @@ npm run build:win
 
 Open `dist\BotDesk-0.1.0-portable.exe`. The portable host includes its own application runtime. The relay and bot MCP adapter run separately from the source project with Node.js and installed dependencies.
 
+If that portable NSIS pack is stuck, the current live test host on the expand line is the unpacked dir build from commit **`ac8a3b1`**: `npm run build:dir` then `dist\win-unpacked\BotDesk.exe`. Launch it outside Codex. **A host rebuild does not update** `mcp/server.mjs` / `mcp/run-with-secret.sh` or a deployed Worker. Next-boot Notepad proof is [NOTEPAD-LIVE.md](NOTEPAD-LIVE.md), not a phone Show/Copy check ([PR #5](https://github.com/Adamdesgns/botdesk/pull/5)).
+
 The host starts OFF. Provisioning creates its host ID; opening the application does not create a pairing automatically.
 
 ## Run a local relay for development
