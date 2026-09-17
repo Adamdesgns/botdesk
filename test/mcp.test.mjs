@@ -13,6 +13,16 @@ test('MCP tool list matches shared command contract', () => {
   assert.deepEqual(TOOL_DEFS.map((tool) => tool.name.replace('botdesk_', '')).sort(), [...COMMANDS].sort());
 });
 
+test('MCP tools never expose a bot-token retrieve surface', () => {
+  assert.equal(COMMANDS.includes('bot-credential'), false);
+  assert.equal(COMMANDS.includes('reveal_bot_token'), false);
+  assert.equal(TOOL_DEFS.some((tool) => /bot-credential|reveal_bot_token|botToken/i.test(tool.name)), false);
+  for (const tool of TOOL_DEFS) {
+    assert.equal(/\/api\/owner\//.test(tool.description), false);
+    assert.equal(/bot-credential/.test(tool.description), false);
+  }
+});
+
 test('away sessions default to eight hours and cap at twelve hours', () => {
   assert.equal(clampArmMinutes(), 480);
   assert.equal(clampArmMinutes('invalid'), 480);

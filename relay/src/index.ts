@@ -5,7 +5,7 @@ import { canBotControl, clampMinutes, DEFAULT_STATE, effectiveState, normalizeMo
 type Secrets = { hostHash: string; ownerHash: string; botHash: string };
 type RecordValue = Record<string, unknown>;
 type OwnerSchedule = { id: string; startsAt: number; endsAt: number };
-type Pending = { id: string; kind: 'command' | 'state'; generation: number; mode?: string; expiresAt?: number | null; resolve: (value: Response) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { id: string; kind: 'command' | 'state' | 'secret'; generation: number; mode?: string; expiresAt?: number | null; resolve: (value: Response) => void; timer: ReturnType<typeof setTimeout> };
 const HTTP_LIMIT = 16_384;
 const FRAME_LIMIT = 10 * 1024 * 1024;
 const COMMAND_TIMEOUT = 20_000;
@@ -128,6 +128,13 @@ export class BotDeskSession extends DurableObject<Env> {
   async ownerStatus(token: string): Promise<Response> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
     return json(this.status());
+  }
+  async ownerBotCredential(token: string, requestId: string): Promise<Response> {
+    if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
+    const replay = this.reserveId(requestId); if (replay) return replay;
+    if (!this.host) return json({ error: 'host-offline' }, 503);
+    if (this.pending) return json({ error: 'host-busy' }, 409);
+    return this.sendAndWait('secret', { type: 'owner_secret_request', requestId, name: 'botToken', controlGeneration: this.generation }, requestId);
   }
   async ownerState(token: string, body: RecordValue, requestId: string): Promise<Response> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
@@ -268,14 +275,16 @@ export class BotDeskSession extends DurableObject<Env> {
     if (this.state.mode !== 'off' && current.mode === 'off') { this.forceOff('session-expired'); this.sendSafetyOff('session-expired'); }
     else this.state = current;
   }
-  private sendAndWait(kind: 'command' | 'state', payload: RecordValue, id: string, mode?: string, expiresAt?: number | null): Promise<Response> {
+  private sendAndWait(kind: 'command' | 'state' | 'secret', payload: RecordValue, id: string, mode?: string, expiresAt?: number | null): Promise<Response> {
     return new Promise((resolve) => {
       const generation = this.generation;
       const timer = setTimeout(() => {
         if (this.pending?.id !== id) return;
-        this.pending = null; this.forceOff(`${kind}-timeout`); this.sendSafetyOff(`${kind}-timeout`);
+        this.pending = null;
+        if (kind === 'secret') { resolve(json({ error: 'secret-timeout' }, 504)); return; }
+        this.forceOff(`${kind}-timeout`); this.sendSafetyOff(`${kind}-timeout`);
         resolve(json({ error: `${kind}-timeout`, ...this.status() }, 504));
-      }, kind === 'state' ? STATE_TIMEOUT : COMMAND_TIMEOUT);
+      }, kind === 'command' ? COMMAND_TIMEOUT : STATE_TIMEOUT);
       this.pending = { id, kind, generation, mode, expiresAt, resolve, timer };
       try { this.host!.send(JSON.stringify(payload)); } catch { this.disconnectHost(this.host!, 'host-send-failed'); }
     });
@@ -332,6 +341,13 @@ export class BotDeskSession extends DurableObject<Env> {
       if (this.state.expiresAt) this.expiryTimer = setTimeout(() => { this.forceOff('session-expired'); this.sendSafetyOff('session-expired'); }, Math.max(1, this.state.expiresAt - Date.now()));
       this.settle(json({ ...this.status(), pending: null, confirmed: true })); return;
     }
+    if (message.type === 'owner_secret_result' && pending.kind === 'secret' && message.requestId === pending.id) {
+      if (message.ok === true && typeof message.token === 'string' && /^[A-Za-z0-9_-]{32,128}$/.test(message.token)) {
+        this.settle(json({ present: true, token: message.token })); return;
+      }
+      this.settle(json({ error: typeof message.error === 'string' ? message.error.slice(0, 160) : 'bot-credential-unavailable' }, 409));
+      return;
+    }
     if (message.type === 'command_result' && pending.kind === 'command' && message.commandId === pending.id) {
       this.settle(message.ok === true ? json({ ok: true, result: message.result }) : json({ error: typeof message.error === 'string' ? message.error.slice(0, 160) : 'command-failed', message: typeof message.message === 'string' ? message.message.slice(0, 500) : undefined }, 409));
     }
@@ -356,13 +372,14 @@ export default {
       }
       const host = /^\/api\/host\/([a-z0-9][a-z0-9-]{0,63})\/socket$/.exec(url.pathname);
       if (host && request.method === 'GET') return sessionStub(env, host[1]).fetch(request);
-      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule)$/.exec(url.pathname);
+      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule|bot-credential)$/.exec(url.pathname);
       const bot = /^\/api\/bot\/([a-z0-9][a-z0-9-]{0,63})\/command$/.exec(url.pathname);
       if (owner || bot) {
         const token = bearer(request); if (!token) return json({ error: 'unauthorized' }, 401);
         const stub = sessionStub(env, (owner || bot)![1]);
         if (owner?.[2] === 'status' && request.method === 'GET') return stub.ownerStatus(token);
-        if (request.method !== 'POST' || owner?.[2] === 'status') return json({ error: 'method-not-allowed' }, 405);
+        if (owner?.[2] === 'bot-credential' && request.method === 'GET') return stub.ownerBotCredential(token, request.headers.get('x-request-id') || '');
+        if (request.method !== 'POST' || owner?.[2] === 'status' || owner?.[2] === 'bot-credential') return json({ error: 'method-not-allowed' }, 405);
         const body = await readJson(request); const requestId = request.headers.get('x-request-id') || '';
         if (owner?.[2] === 'state') return stub.ownerState(token, body, requestId);
         if (owner?.[2] === 'schedule') return stub.ownerSchedule(token, body, requestId);

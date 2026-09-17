@@ -226,6 +226,39 @@ test('bot status never returns pairing or owner credentials', async (t) => {
   }
 });
 
+test('owner reveal returns the saved bot token and never logs plaintext', (t) => {
+  const token = 'private-bot-secret-value-for-owner-reveal';
+  const s = setup(t, { hostToken: 'private-host-secret', ownerToken: 'private-owner-secret', botToken: token });
+  const result = s.controller.revealBotCredential();
+  assert.equal(result.ok, true);
+  assert.equal(result.token, token);
+  const audit = JSON.stringify(s.events);
+  assert.equal(audit.includes(token), false);
+  assert.ok(s.events.some((entry) => entry.command === 'owner-bot-credential' && entry.outcome === 'revealed'));
+  assert.equal(JSON.stringify(s.controller.getStatus()).includes(token), false);
+});
+
+test('owner reveal fails closed when the host did not save a bot token', (t) => {
+  const s = setup(t, { hostToken: 'private-host-secret', ownerToken: 'private-owner-secret' });
+  const result = s.controller.revealBotCredential();
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'bot-credential-not-saved');
+  assert.equal(Object.hasOwn(result, 'token'), false);
+  assert.ok(s.events.some((entry) => entry.command === 'owner-bot-credential' && entry.outcome === 'missing'));
+});
+
+test('bot command path cannot reveal the saved bot token', async (t) => {
+  const token = 'private-bot-secret-value-for-command-isolation';
+  const s = setup(t, { botToken: token });
+  s.arm();
+  for (const name of ['owner_secret_request', 'reveal_bot_token', 'bot-credential', 'botToken']) {
+    const response = await s.controller.runCommand(s.command(name));
+    const text = JSON.stringify(response);
+    assert.equal(response.ok, false);
+    assert.equal(text.includes(token), false);
+  }
+});
+
 test('expiry and lost relay connection revoke access and invalidate snapshots', async (t) => {
   const s = setup(t); s.arm(); await s.capture();
   s.advance(300_001); assert.equal(s.controller.getStatus().mode, 'off');
