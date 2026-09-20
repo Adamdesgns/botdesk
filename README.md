@@ -4,7 +4,7 @@ A free Windows companion for Grok bot owners using a compatible tool runner.
 
 Let approved bots operate one selected app window on your Windows PC while you are away. Use your private phone dashboard to go live now, set a countdown, schedule a dated window such as **6 AM to 6 PM**, pause access, or turn it off.
 
-**Development baseline. The relay is not deployed or paired, and remote phone access is not live.** Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
+**Development baseline, not a store launch.** The public landing page is in [`site/`](site/). You deploy your own Cloudflare relay; there is no shared BotDesk cloud. Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
 
 ## Prepare this PC
 
@@ -45,7 +45,7 @@ npm run build:win
 node scripts/desktop-smoke.mjs --packaged
 ```
 
-The Windows portable build is `dist/BotDesk-0.1.0-portable.exe`. This development build is unsigned. Pairing secrets stay outside the repository and are encrypted by Windows when saved in the host.
+The Windows portable build is `dist/BotDesk-0.1.0-portable.exe`. This development build is unsigned. GitHub Releases is the download target for the landing page; pairing secrets stay outside the repository and are encrypted by Windows when saved in the host.
 
 Closing BotDesk's window hides it to the tray; Quit BotDesk ends the host. Automatic startup is optional and is not enabled by this build process.
 
