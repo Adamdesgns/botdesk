@@ -54,13 +54,21 @@ test('fresh snapshot id and bounded inputs are required before HTTP call', async
     ['click', { x: 10, y: 10 }], ['type', { text: 'hello' }], ['key', { key: 'ENTER' }], ['scroll', { deltaY: 120 }],
     ['click', { snapshotId: 'a', x: -1, y: 1 }], ['click', { snapshotId: 'a', x: 1.5, y: 1 }],
     ['scroll', { snapshotId: 'a', deltaY: 0 }], ['scroll', { snapshotId: 'a', deltaY: 9999 }],
-    ['key', { snapshotId: 'a', key: 'CTRL+V' }], ['key', { snapshotId: 'a', key: 'WIN+R' }],
+    ['key', { snapshotId: 'a', key: 'WIN+R' }], ['key', { snapshotId: 'a', key: 'CTRL+ALT+DELETE' }],
     ['type', { snapshotId: 'a', text: '\u001b' }], ['type', { snapshotId: 'a', text: 'a'.repeat(4001) }],
     ['type', { snapshotId: 'a', text: 'javascript:alert(1)' }], ['type', { snapshotId: 'a', text: '\t' }],
     ['status', { script: 'shell command' }], ['screenshot', { maxWidth: 100 }],
-    ['focus', { handle: '9999' }], ['focus', { snapshotId: 'a' }]
+    ['focus', { handle: '1001' }], ['focus', { snapshotId: 'a' }], ['list_monitors', { allDesktops: true }]
   ]) await assert.rejects(call(`botdesk_${name}`, args), (error) => !error.message.includes('Network must not'));
   assert.equal(validateToolArgs('botdesk_click', { snapshotId: 'fresh', x: 0, y: 0 }), 'click');
+  assert.equal(validateToolArgs('botdesk_key', { snapshotId: 'fresh', key: 'CTRL+V' }), 'key');
+  for (const key of ['E', 'W', 'A', 'S', 'D', 'SPACE', 'CTRL+C', 'CTRL+S']) {
+    assert.equal(validateToolArgs('botdesk_key', { snapshotId: 'fresh', key }), 'key');
+  }
+  assert.equal(validateToolArgs('botdesk_clipboard_write', { text: 'copied' }), 'clipboard_write');
+  assert.throws(() => validateToolArgs('botdesk_clipboard_write', { text: 'x'.repeat(4001) }));
+  assert.equal(validateToolArgs('botdesk_focus', {}), 'focus');
+  assert.equal(validateToolArgs('botdesk_list_monitors', {}), 'list_monitors');
 });
 
 test('maximum Unicode plain-text input fits bounded relay request and retains contents', async () => {
@@ -124,10 +132,15 @@ test('screenshot content carries target pixels and snapshot id and rejects inval
     assert.throws(() => toolContent('botdesk_screenshot', { ...result, image }));
   }
   assert.throws(() => toolContent('botdesk_snapshot', { text: 'x'.repeat(1024 * 1024 + 1) }), /oversized/);
+  const jpeg = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0xFF, 0xD9]).toString('base64');
+  const jpegContent = toolContent('botdesk_screenshot', { snapshotId: 'jpeg-frame', image: { data: jpeg, mimeType: 'image/jpeg', width: 1920, height: 1080 } });
+  assert.equal(jpegContent[0].mimeType, 'image/jpeg');
+  assert.equal(JSON.parse(jpegContent[1].text).mimeType, 'image/jpeg');
+  assert.throws(() => toolContent('botdesk_screenshot', { snapshotId: 'bad-jpeg', image: { data: Buffer.from([0xFF, 0xD8, 0x00, 0x00]).toString('base64'), mimeType: 'image/jpeg', width: 1, height: 1 } }), /Invalid screenshot JPEG/);
 });
 
 test('SDK client starts the MCP executable and completes tools over real stdio', { timeout: 20_000 }, async () => {
   const result = await runMcpSmoke();
-  assert.equal(result.toolCount, 12);
+  assert.equal(result.toolCount, 18);
   assert.equal(result.relayRequests, 7);
 });

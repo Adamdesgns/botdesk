@@ -8,74 +8,92 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <main>
-    <header>
-      <div>
-        <p class="eyebrow">ADAM DESIGNS / WINDOWS HOST</p>
-        <h1>BOTDESK</h1>
-        <p class="lede">Approved bots can see and operate this PC only while you arm a timed session.</p>
-      </div>
-      <div id="modeBadge" class="mode off">OFF</div>
+  <a class="skip-link" href="#setupHeading">Skip to setup</a>
+  <main class="workspace">
+    <header class="masthead">
+      <div class="brand"><img src="assets/icon.png" alt="" width="38" height="38"><span>BOTDESK<span class="edition">FREE</span></span></div>
+      <div class="masthead-right"><span class="platform">WINDOWS HOST</span><span class="connection-pill" id="connectionSummary">PC not paired</span></div>
     </header>
 
-    <section class="control-card">
-      <div>
-        <p class="label">LOCAL CONTROL</p>
-        <h2 id="statusTitle">Bot access is off</h2>
-        <p id="statusDetail">The relay may stay online, but bot commands are rejected here.</p>
-      </div>
-      <div class="button-row">
-        <button id="armButton" class="primary">GO LIVE — 8 HOURS</button>
-        <button id="pauseButton">PAUSE</button>
-        <button id="stopButton" class="danger">STOP NOW</button>
-        <button id="unlockButton" hidden>UNLOCK LOCAL STOP</button>
-      </div>
-      <p class="hotkey">Emergency stop: <strong>Ctrl + Shift + F12</strong></p>
-    </section>
+    <div class="page-intro">
+      <div><p class="eyebrow">FOR GROK BOT OWNERS</p><h1>Your bot. Your PC.<br><span>You hold the switch.</span></h1></div>
+      <p class="intro-copy">Choose one window. Set the timer.<br>Let your bot work while you’re away.</p>
+    </div>
 
-    <section>
-      <div class="section-heading"><div><p class="label">APPROVED WINDOW</p><h2>Choose what the bot can use</h2></div><button id="refreshWindows">REFRESH WINDOWS</button></div>
-      <label>Available app windows<select id="targetWindow"><option value="">Refresh to choose a window</option></select></label>
-      <p id="targetDetail" class="quiet">Only the selected window is captured and controlled. Bring it to the foreground before sending the bot in.</p>
-    </section>
-    <section class="grid">
-      <article>
-        <p class="label">CONNECTION</p>
-        <dl>
-          <div><dt>Relay</dt><dd id="relayState">Not configured</dd></div>
-          <div><dt>Host ID</dt><dd id="hostState">Not configured</dd></div>
-          <div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div>
-        </dl>
-      </article>
-      <article>
-        <p class="label">REMOTE OWNER CONTROL</p>
-        <label class="check"><input id="remoteArm" type="checkbox"> Allow remote arming while BotDesk is running</label>
-        <label class="check"><input id="startAtLogin" type="checkbox"> Start BotDesk when I sign in</label>
-        <p class="quiet">Leave this PC awake and unlocked. The phone can arm access after you select a window here. A local emergency stop requires unlocking here.</p>
-        <button id="copyOwnerLink">COPY PHONE LINK</button>
-      </article>
-    </section>
+    <div class="desk-layout">
+      <section class="setup-surface" aria-labelledby="setupHeading">
+        <div class="setup-header"><div><p class="eyebrow">BEFORE YOU LEAVE</p><h2 id="setupHeading" tabindex="-1">Prepare this PC</h2></div><span class="progress-counter" id="readinessCount">0 / 3 ready</span></div>
+        <p class="setup-summary" id="setupProgress">Start by pairing this PC with your private relay.</p>
+        <div class="step-nav" id="setupTabs" role="tablist" aria-label="PC preparation">
+          <button class="step-tab" type="button" data-step="pair" id="pairTab" role="tab" aria-controls="pairPanel" aria-selected="true"><span class="step-number">01</span><span>Pair PC<small id="pairStepState">Not paired</small></span></button>
+          <button class="step-tab" type="button" data-step="window" id="windowTab" role="tab" aria-controls="windowPanel" aria-selected="false"><span class="step-number">02</span><span>Choose window<small id="windowStepState">Not selected</small></span></button>
+          <button class="step-tab" type="button" data-step="phone" id="phoneTab" role="tab" aria-controls="phonePanel" aria-selected="false"><span class="step-number">03</span><span>Phone access<small id="phoneStepState">Not enabled</small></span></button>
+        </div>
 
-    <section>
-      <label>Paste the host pairing JSON<textarea id="pairingJson" rows="3" placeholder="Paste the config object from the private provisioning file"></textarea></label>
-      <button id="importPairing">FILL PAIRING SETTINGS</button>
-      <div class="section-heading">
-        <div><p class="label">SETUP</p><h2>Relay and private tokens</h2></div>
-        <button id="saveButton">SAVE SETTINGS</button>
-      </div>
-      <div class="form-grid">
-        <label>Relay URL<input id="relayUrl" type="url" placeholder="https://botdesk-relay.example.workers.dev"></label>
-        <label>Host ID<input id="hostId" autocomplete="off"></label>
-        <label>Host token<input id="hostToken" type="password" autocomplete="new-password"></label>
-        <label>Owner token<input id="ownerToken" type="password" autocomplete="new-password"></label>
-        <label>Bot token<input id="botToken" type="password" autocomplete="new-password"></label>
-        <label>Allowed apps<input id="allowedApps" placeholder="msedge, chrome, firefox, notepad"></label>
-      </div>
-      <p class="quiet">Leave a token blank to keep the last saved value. The host can connect without a bot token.</p>
-      <p id="saveResult" class="result" aria-live="polite"></p>
-      <button id="openCaptures">OPEN RECORDINGS</button><p class="quiet">Recordings contain guarded window captures at up to one frame per second. Audio is not recorded.</p>
+        <div class="step-panel" data-panel="pair" id="pairPanel" role="tabpanel" aria-labelledby="pairTab">
+          <div class="panel-heading"><span class="step-label">STEP 01</span><h3>Give this PC its connection.</h3><p>Paste the host pairing details from your private relay setup. BotDesk saves your keys with Windows encryption.</p></div>
+          <label for="pairingJson">Host pairing details</label>
+          <input id="pairingJson" class="pairing-secret" type="password" spellcheck="false" autocomplete="new-password" placeholder="Paste your private host config JSON" aria-describedby="pairingHelp">
+          <p class="field-help" id="pairingHelp">Pasted details are hidden. No pairing file yet? The free build needs a private relay before remote use. The repository’s setup guide walks through it.</p>
+          <div class="inline-actions"><button id="importPairing" class="button light" type="button">Read pairing details <span aria-hidden="true">↗</span></button><button id="saveButton" class="button ink" type="button">Save &amp; connect</button></div>
+          <p class="inline-feedback" id="pairFeedback" role="status"></p>
+          <details class="advanced" id="advancedSettings"><summary>Advanced connection settings <span aria-hidden="true">＋</span></summary><div class="form-grid">
+            <label>Relay URL<input id="relayUrl" type="url" placeholder="https://your-relay.workers.dev" autocomplete="off"></label>
+            <label>Host ID<input id="hostId" autocomplete="off" spellcheck="false"></label>
+            <label>Host token<input id="hostToken" type="password" autocomplete="new-password"></label>
+            <label>Owner token<input id="ownerToken" type="password" autocomplete="new-password"></label>
+            <label>Bot token <span class="optional">optional on this PC</span><input id="botToken" type="password" autocomplete="new-password"></label>
+            <label>Allowed apps<input id="allowedApps" placeholder="msedge, chrome, firefox, notepad" spellcheck="false"></label>
+          </div></details>
+          <div class="panel-footer"><span id="nextStep">Next: select the window your bot can use.</span><button id="continueWindow" class="text-button" type="button">Choose window <span aria-hidden="true">→</span></button></div>
+        </div>
+
+        <div class="step-panel" data-panel="window" id="windowPanel" role="tabpanel" aria-labelledby="windowTab" hidden>
+          <div class="panel-heading"><span class="step-label">STEP 02</span><h3>One window. A clear boundary.</h3><p>Open the app your bot should use, then select its window here. Your bot’s screenshots and actions stay inside that selected window.</p></div>
+          <div class="window-illustration" aria-hidden="true"><div class="mock-titlebar"><i></i><i></i><i></i><span>YOUR SELECTED WINDOW</span></div><div class="mock-content"><div class="mock-side"></div><div class="mock-lines"><b></b><b></b><b></b><span>BOT ACCESS</span></div><div class="mock-cursor">↖</div></div></div>
+          <label class="toggle-row" for="studioAccess"><span><strong>Allow Roblox Studio for this PC</strong><small>For local game tests. Changing this stops access and clears the selected window.</small></span><input id="studioAccess" type="checkbox"></label>
+          <div class="field-heading"><label for="targetWindow">Available app windows</label><button id="refreshWindows" class="text-button" type="button">Refresh <span aria-hidden="true">↻</span></button></div>
+          <select id="targetWindow" aria-describedby="targetDetail"><option value="">Refresh to choose a window</option></select>
+          <p class="field-help" id="targetDetail">Choose an app window before arming. Only that window is captured and controlled.</p>
+          <p class="inline-feedback" id="windowFeedback" role="status"></p>
+          <div class="boundary-note"><span aria-hidden="true">↳</span><p>Use a dedicated browser profile for bot work. You’ll choose the window again after restarting BotDesk.</p></div>
+          <div class="panel-footer"><span>Browsers, Notepad, or opted-in Roblox Studio</span><button id="continuePhone" class="text-button" type="button">Phone access <span aria-hidden="true">→</span></button></div>
+        </div>
+
+        <div class="step-panel" data-panel="phone" id="phonePanel" role="tabpanel" aria-labelledby="phoneTab" hidden>
+          <div class="panel-heading"><span class="step-label">STEP 03</span><h3>Leave with the controls.</h3><p>Turn access on from your phone, or set a window like 6 AM–6 PM. The timer ends access automatically.</p></div>
+          <div class="schedule-example" aria-label="Example twelve-hour access window"><div><span>START</span><strong>6:00<span>AM</span></strong></div><div class="schedule-line"><i></i><span>YOUR HOURS</span><i></i></div><div><span>STOP</span><strong>6:00<span>PM</span></strong></div></div>
+          <label class="toggle-row" for="remoteArm"><span><strong>Allow access from my phone</strong><small>Only while BotDesk is running on this PC.</small></span><input id="remoteArm" type="checkbox"></label>
+          <label class="toggle-row" for="startAtLogin"><span><strong>Start BotDesk when I sign in</strong><small>Optional. You’ll still select a window.</small></span><input id="startAtLogin" type="checkbox"></label>
+          <div class="inline-actions"><button id="savePhoneButton" class="button ink" type="button">Save phone settings</button><button id="copyOwnerLink" class="button light" type="button">Copy private phone link <span aria-hidden="true">↗</span></button></div>
+          <p class="inline-feedback" id="phoneFeedback" role="status"></p><p class="field-help" id="copyPhoneFeedback"></p>
+          <div class="boundary-note"><span aria-hidden="true">↳</span><p>Keep the owner link for yourself. Leave Windows awake and unlocked. Phone access cannot unlock or power on this PC.</p></div>
+        </div>
+      </section>
+
+      <aside class="session-console" aria-labelledby="statusTitle">
+        <div class="console-top"><span class="eyebrow">YOUR ACCESS SWITCH</span><span class="mode off" id="modeBadge">OFF</span></div>
+        <h2 id="statusTitle" aria-live="polite">Bot access is off</h2>
+        <p class="console-detail" id="statusDetail">Bot commands are rejected until you arm a session.</p>
+        <div class="clock-block"><span>TIME REMAINING</span><strong id="sessionClock">—</strong></div>
+        <label class="session-duration" for="sessionMinutes">Session length<select id="sessionMinutes"><option value="5">5 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="480">8 hours</option></select></label>
+        <div class="session-actions"><button id="armButton" class="button cream" type="button">Go live <span aria-hidden="true">↗</span></button><button id="pauseButton" class="button outline" type="button">Pause access</button><button id="stopButton" class="button stop" type="button"><span class="stop-square" aria-hidden="true"></span>STOP NOW</button><button id="unlockButton" class="button outline" type="button" hidden>Unlock local stop</button></div>
+        <dl class="session-facts"><div><dt>PC connection</dt><dd id="relayState">Offline</dd></div><div><dt>Selected window</dt><dd id="selectedWindowName">Choose a window</dd></div><div><dt>Bot activity</dt><dd id="botActivity">No active bot</dd></div><div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div></dl>
+
+        <p class="console-hint" id="goLiveHint">Pair this PC and choose a window before going live.</p>
+        <p class="result" id="saveResult" role="status" aria-live="polite"></p>
+        <div class="emergency"><span>At the PC, stop anytime</span><div><kbd>Ctrl</kbd><span>+</span><kbd>Shift</kbd><span>+</span><kbd>F12</kbd></div></div>
+        <details class="host-details"><summary>Connection details</summary><p>Host ID <code id="hostState">Not configured</code></p></details>
+      </aside>
+    </div>
+
+    <section class="bottom-tools" aria-label="Bot setup and recordings">
+      <details class="bot-guide" id="botGuideToggle"><summary><span class="tool-glyph" aria-hidden="true">↔</span><span><strong>Connect your Grok bot’s tools</strong><small>Bring the runner. BotDesk supplies the controls.</small></span><span class="expand-mark" aria-hidden="true">＋</span></summary><div class="guide-body"><p>Register <code>mcp/server.mjs</code> with the tool runner your bot uses. MCP is the connection that supplies screenshots and actions. The runner needs Node.js and the adapter’s installed dependencies.</p><ol><li>Give the runner only the relay URL, host ID and <strong>bot token</strong>.</li><li>Ask the bot to check BotDesk’s status, then take a fresh screenshot before each action.</li><li>Start access here or from your private phone link.</li></ol><p>The included setup guide has the exact configuration. BotDesk does not sign into Grok or automatically connect a bot.</p></div></details>
+      <div class="recordings-tool"><div class="tool-glyph" aria-hidden="true">▣</div><div><strong>Your test recordings</strong><p>Local window captures. About 1 fps. No audio.</p><button id="openCaptures" class="text-button" type="button">Open recordings <span aria-hidden="true">↗</span></button></div></div>
     </section>
+    <footer><span>BUILT BY ADAM DESIGNS</span><span>Independent software. Not affiliated with xAI.</span><span>BOTDESK FREE · 0.1</span></footer>
   </main>
-  <script src="renderer.js"></script>
+  <button id="quickStopButton" class="quick-stop" type="button" aria-label="Emergency stop bot access"><span aria-hidden="true">■</span> STOP</button>
+  <script type="module" src="renderer.js"></script>
 </body>
 </html>

@@ -48,10 +48,12 @@ export async function runMcpSmoke() {
   try {
     await client.connect(transport, { timeout: 10_000 });
     const tools = await client.listTools();
-    assert.equal(tools.tools.length, 12);
-    for (const suffix of ['status', 'screenshot', 'snapshot', 'list_windows', 'focus', 'scroll', 'click', 'type', 'key', 'record_start', 'record_stop', 'stop_all']) {
+    assert.equal(tools.tools.length, 18);
+    for (const suffix of ['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'focus', 'scroll', 'click', 'move', 'drag', 'type', 'key', 'clipboard_read', 'clipboard_write', 'record_start', 'record_stop', 'stop_all']) {
       assert.ok(tools.tools.some((tool) => tool.name === `botdesk_${suffix}`));
     }
+    const capabilities = await client.callTool({ name: 'botdesk_capabilities', arguments: {} });
+    assert.equal(JSON.parse(capabilities.content[0].text).contractVersion, '1.1.0');
     const status = await client.callTool({ name: 'botdesk_status', arguments: {} });
     assert.equal(JSON.parse(status.content[0].text).mode, 'off');
     const screenshot = await client.callTool({ name: 'botdesk_screenshot', arguments: {} });
@@ -64,11 +66,12 @@ export async function runMcpSmoke() {
     const invalid = await client.callTool({ name: 'botdesk_click', arguments: { x: 0, y: 0 } });
     assert.equal(invalid.isError, true);
     assert.equal(requests.length, beforeInvalid, 'Invalid input must never reach relay');
-    const focus = await client.callTool({ name: 'botdesk_focus', arguments: {} });
-    assert.notEqual(focus.isError, true);
-    assert.equal(JSON.parse(focus.content[0].text).command, 'focus');
     const scroll = await client.callTool({ name: 'botdesk_scroll', arguments: { snapshotId: 'smoke-controls', deltaY: 120 } });
     assert.notEqual(scroll.isError, true);
+    const dragArgs = { snapshotId: 'fixture-drag', points: [{ x: 1, y: 2 }, { x: 12, y: 32 }], durationMs: 300 };
+    const drag = await client.callTool({ name: 'botdesk_drag', arguments: dragArgs });
+    assert.notEqual(drag.isError, true);
+    assert.deepEqual(requests.at(-1).args, dragArgs);
     for (const name of ['botdesk_record_stop', 'botdesk_stop_all']) {
       assert.notEqual((await client.callTool({ name, arguments: {} })).isError, true);
     }

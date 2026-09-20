@@ -38,7 +38,13 @@ export class RelayClient extends EventEmitter {
     }else if(m.type==='heartbeat_ack')this.lastAck=Date.now();
     else if(m.type==='owner_state')await this.onOwnerState(m);
     else if(m.type==='command'){const response=await this.onCommand(m);
-      if(socket===this.socket&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'command_result',commandId:m.commandId,...response}));}
+      if(socket===this.socket&&socket.readyState===WebSocket.OPEN){
+        const payload=JSON.stringify({type:'command_result',commandId:m.commandId,...response});
+        // Refuse oversized frames instead of sending a payload that trips relay disconnect.
+        if(payload.length>9*1024*1024){
+          socket.send(JSON.stringify({type:'command_result',commandId:m.commandId,ok:false,error:'capture-too-large'}));
+        } else socket.send(payload);
+      }}
   }
   async ownerState(mode,minutes=480){
     const c=this.getConfig();

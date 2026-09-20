@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('botdesk',{
   clearStop:()=>ipcRenderer.invoke('botdesk:clear-stop'),
   emergencyStop:()=>ipcRenderer.invoke('botdesk:stop'),
   saveConfig:config=>ipcRenderer.invoke('botdesk:save-config',config),
+  setStudioAccess:enabled=>ipcRenderer.invoke('botdesk:set-studio-access',enabled),
   listWindows:()=>ipcRenderer.invoke('botdesk:windows'),
   selectWindow:handle=>ipcRenderer.invoke('botdesk:select-window',handle),
   openCaptures:()=>ipcRenderer.invoke('botdesk:captures'),

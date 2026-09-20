@@ -9,6 +9,7 @@
     "start": "electron .",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "check": "npm run test && npm run relay:types && npm run mcp:smoke",
+    "credential:doctor": "node scripts/credential-doctor.mjs",
     "relay:types": "wrangler types --config relay/wrangler.jsonc && tsc -p relay/tsconfig.json --noEmit",
     "relay:dev": "wrangler dev --config relay/wrangler.jsonc",
     "relay:deploy": "wrangler deploy --config relay/wrangler.jsonc",

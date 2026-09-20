@@ -54,6 +54,51 @@ test('GO LIVE defaults to an eight-hour session and caps requested sessions at t
   assert.equal(s.controller.getStatus().expiresAt, 1000 + 720 * 60_000);
 });
 
+test('a requested thirty-minute session expires and cannot be renewed by input', async (t) => {
+  const s = setup(t); s.controller.selectTarget(target());
+  s.controller.setMode('armed', { minutes: 30, generation: 1 });
+  const expiry = 1000 + 30 * 60_000;
+  assert.equal(s.controller.getStatus().expiresAt, expiry);
+  await s.capture(); assert.equal(s.controller.getStatus().expiresAt, expiry);
+  s.advance(30 * 60_000);
+  assert.equal(s.controller.getStatus().mode, 'off');
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).ok, false);
+});
+
+test('drag consumes one fresh snapshot and passes its exact title and geometry to native checks', async (t) => {
+  const s = setup(t); s.arm();
+  const args = { snapshotId: 'missing', points: [{ x: 1, y: 1 }, { x: 20, y: 20 }], durationMs: 500 };
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'fresh-snapshot-required');
+  args.snapshotId = await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).ok, true);
+  assert.equal(s.calls.at(-1).args.snapshotTitle, target().title);
+  assert.deepEqual(s.calls.at(-1).args.geometry, target().geometry);
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'fresh-snapshot-required');
+  args.snapshotId = await s.capture(); s.changeWindow({ title: 'Other page' });
+  assert.equal((await s.controller.runCommand(s.command('drag', args))).error, 'window-moved-retake-snapshot');
+});
+
+test('STOP during drag waits for executor cleanup and latches any unconfirmed mouse release', async (t) => {
+  for (const error of ['windows-drag-release-unconfirmed', 'windows-drag-stop-unconfirmed']) {
+    const s = setup(t); s.arm(); const snapshotId = await s.capture();
+    const started = deferred(), cleanup = deferred(); let signal;
+    s.executor.run = async (_, __, options) => { signal = options.signal; started.resolve(); return cleanup.promise; };
+    const result = s.controller.runCommand(s.command('drag', { snapshotId, points: [{ x: 1, y: 1 }, { x: 2, y: 2 }], durationMs: 500 }));
+    await started.promise; s.controller.emergencyStop();
+    assert.equal(signal.aborted, true);
+    assert.ok(s.controller.operation, 'operation must remain busy while native cleanup is pending');
+    let idle = false; const settled = s.controller.whenIdle().then(() => { idle = true; });
+    await Promise.resolve(); assert.equal(idle, false, 'quit must wait for drag cleanup');
+    cleanup.resolve({ ok: false, error });
+    assert.equal((await result).error, error);
+    await settled; assert.equal(idle, true);
+    assert.equal(s.controller.getStatus().mode, 'off');
+    assert.equal(s.controller.getStatus().inputSafetyFault, error);
+    assert.throws(() => s.controller.clearLocalStop(), new RegExp(error));
+    assert.throws(() => s.controller.setMode('armed'), new RegExp(error));
+  }
+});
+
 test('commands without valid deadline, generation and replay ID fail before target access', async (t) => {
   const s = setup(t); s.arm();
   let foregroundCalls = 0;
@@ -146,57 +191,6 @@ test('moving the target or changing its page title invalidates the captured coor
   assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: next, x: 20, y: 30 }))).error, 'window-moved-retake-snapshot');
 });
 
-test('focus restores only the approved HWND/PID after another window steals foreground', async (t) => {
-  const s = setup(t); s.arm();
-  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
-  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'target-changed');
-  s.executor.focus = async (targetWindow, options) => {
-    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options });
-    assert.equal(targetWindow.handle, '1001');
-    assert.equal(targetWindow.processId, 123);
-    s.changeWindow(target());
-    return { ok: true, window: target() };
-  };
-  const focused = await s.controller.runCommand(s.command('focus'));
-  assert.equal(focused.ok, true, JSON.stringify(focused));
-  assert.equal(focused.result.focused, true);
-  assert.equal(focused.result.window.handle, '1001');
-  assert.equal(s.calls.filter((call) => call.name === 'focus').length, 1);
-  assert.equal(s.calls.every((call) => !call.args?.expectedWindow || (call.args.expectedWindow.handle === '1001' && call.args.expectedWindow.processId === 123)), true);
-  const snapshotId = await s.capture();
-  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId, x: 1, y: 1 }))).ok, true);
-});
-
-test('focus fails closed with a clear error when Windows refuses to steal foreground', async (t) => {
-  const s = setup(t); s.arm();
-  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
-  s.executor.focus = async (targetWindow) => {
-    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
-    return { ok: false, error: 'focus-refused' };
-  };
-  const refused = await s.controller.runCommand(s.command('focus'));
-  assert.equal(refused.ok, false);
-  assert.equal(refused.error, 'focus-refused');
-  assert.match(refused.message, /Windows refused to foreground the approved window/);
-  assert.equal(s.calls.every((call) => call.args?.expectedWindow?.handle === '1001' && call.args.expectedWindow.processId === 123), true);
-  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'target-changed');
-});
-
-test('successful native focus still fails closed if the restored window is sensitive', async (t) => {
-  const s = setup(t); s.arm();
-  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
-  s.executor.focus = async (targetWindow) => {
-    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
-    s.changeWindow({ ...target(), title: 'Sign in to account', passwordPresent: true });
-    return { ok: true };
-  };
-  const blocked = await s.controller.runCommand(s.command('focus'));
-  assert.equal(blocked.ok, false);
-  assert.equal(blocked.error, 'credential');
-  assert.equal(blocked.result?.focused, undefined);
-  assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
-  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'credential');
-});
 
 test('approved target and password detection remain guards even with a fresh snapshot', async (t) => {
   const s = setup(t); s.arm(); const snapshotId = await s.capture();
@@ -262,4 +256,110 @@ test('recording failure revokes recording flag and local capture signal', async 
   options.onFailure();
   assert.equal(options.signal.aborted, true);
   assert.equal(s.controller.getStatus().recording, false);
+});
+
+test('read requests restore only the approved target and verify foreground again',async t=>{
+  for(const name of ['screenshot','snapshot','list_windows']){
+    const s=setup(t);s.arm();s.changeWindow({handle:'other',processId:777});let focusCalls=0;
+    s.executor.focus=async(window,{signal})=>{focusCalls++;assert.equal(window.handle,'1001');assert.equal(signal.aborted,false);s.changeWindow(target());return {ok:true};};
+    assert.equal((await s.controller.runCommand(s.command(name))).ok,true);assert.equal(focusCalls,1);
+  }
+});
+test('read focus refusal and false success never produce a screenshot',async t=>{
+  for(const response of [{ok:false,error:'focus-refused'},{ok:true}]){
+    const s=setup(t);s.arm();s.changeWindow({handle:'other'});s.executor.focus=async()=>response;
+    const r=await s.controller.runCommand(s.command('screenshot'));assert.equal(r.ok,false);assert.equal(s.calls.length,0);
+    assert.equal(r.error,response.ok?'target-changed':'focus-refused');
+  }
+});
+test('STOP aborts focus recovery and a late success cannot capture or rearm',async t=>{
+  const s=setup(t);s.arm();s.changeWindow({handle:'other'});const pending=deferred();let signal;
+  s.executor.focus=async(_window,options)=>{signal=options.signal;return pending.promise;};
+  const request=s.controller.runCommand(s.command('screenshot'));await new Promise(resolve=>setImmediate(resolve));
+  s.controller.emergencyStop();assert.equal(signal.aborted,true);pending.resolve({ok:true});
+  assert.equal((await request).error,'command-cancelled');assert.equal(s.calls.length,0);assert.equal(s.controller.mode,'off');
+});
+test('input and disabled sessions cannot trigger focus recovery',async t=>{
+  const s=setup(t);s.arm();const snapshotId=await s.capture();s.changeWindow({handle:'other'});let focusCalls=0;
+  s.executor.focus=async()=>{focusCalls++;return {ok:true};};
+  for(const name of ['click','type','key','scroll'])assert.equal((await s.controller.runCommand(s.command(name,{snapshotId,x:0,y:0,text:'test',key:'ENTER',deltaY:120}))).ok,false);
+  s.controller.setMode('off',{generation:1});assert.equal((await s.controller.runCommand(s.command('screenshot'))).ok,false);assert.equal(focusCalls,0);
+});
+test('focus recovery invalidates previous snapshots',async t=>{
+  const s=setup(t);s.arm();const old=await s.capture();s.changeWindow({handle:'other'});
+  s.executor.focus=async()=>{s.changeWindow(target());return {ok:true};};await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('type',{snapshotId:old,text:'test'}))).error,'fresh-snapshot-required');
+});
+
+test('explicit focus restores only the approved HWND/PID after another window steals foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: 'stale', x: 1, y: 1 }))).error, 'target-changed');
+  s.executor.focus = async (targetWindow, options) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options });
+    assert.equal(targetWindow.handle, '1001');
+    assert.equal(targetWindow.processId, 123);
+    s.changeWindow(target());
+    return { ok: true, window: target() };
+  };
+  const focused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(focused.ok, true, JSON.stringify(focused));
+  assert.equal(focused.result.focused, true);
+  assert.equal(focused.result.window.handle, '1001');
+  assert.equal(s.calls.filter((call) => call.name === 'focus').length, 1);
+  assert.equal(s.calls.every((call) => !call.args?.expectedWindow || (call.args.expectedWindow.handle === '1001' && call.args.expectedWindow.processId === 123)), true);
+});
+
+test('explicit focus fails closed with a clear error when Windows refuses to steal foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.focus = async (targetWindow) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
+    return { ok: false, error: 'focus-refused' };
+  };
+  const refused = await s.controller.runCommand(s.command('focus'));
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error, 'focus-refused');
+  assert.match(refused.message, /Windows refused to foreground the approved window/);
+  assert.equal(s.calls.every((call) => call.args?.expectedWindow?.handle === '1001' && call.args.expectedWindow.processId === 123), true);
+});
+
+test('successful native focus still fails closed if the restored window is sensitive', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.focus = async (targetWindow) => {
+    s.calls.push({ name: 'focus', args: { expectedWindow: targetWindow } });
+    s.changeWindow({ ...target(), title: 'Sign in to account', passwordPresent: true });
+    return { ok: true };
+  };
+  const blocked = await s.controller.runCommand(s.command('focus'));
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.error, 'credential');
+  assert.equal(blocked.result?.focused, undefined);
+  assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
+});
+
+test('list_monitors works while another allowed window is foreground', async (t) => {
+  const s = setup(t); s.arm();
+  s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
+  s.executor.run = async (name, args, options) => {
+    s.calls.push({ name, args, options });
+    assert.equal(name, 'list_monitors');
+    return { ok: true, monitors: [{ index: 0, primary: true, bounds: { x: 0, y: 0, width: 1920, height: 1080 } }] };
+  };
+  const listed = await s.controller.runCommand(s.command('list_monitors'));
+  assert.equal(listed.ok, true, JSON.stringify(listed));
+  assert.equal(listed.result.monitors[0].primary, true);
+  assert.equal(s.calls.some((call) => call.name === 'focus'), false);
+});
+
+test('oversized screenshot data is rejected as capture-too-large before relay delivery', async (t) => {
+  const s = setup(t); s.arm();
+  s.executor.run = async (name) => {
+    if (name !== 'screenshot') return { ok: true, window: target() };
+    return { ok: true, window: target(), image: { mimeType: 'image/jpeg', data: 'A'.repeat(7_500_001), width: 1920, height: 1080 } };
+  };
+  const oversized = await s.controller.runCommand(s.command('screenshot'));
+  assert.equal(oversized.ok, false);
+  assert.equal(oversized.error, 'capture-too-large');
 });

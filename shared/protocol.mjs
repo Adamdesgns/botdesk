@@ -7,18 +7,39 @@ export const MODES = Object.freeze({
 
 export const COMMANDS = Object.freeze([
   'status',
+  'capabilities',
   'screenshot',
   'snapshot',
   'list_windows',
+  'list_monitors',
   'focus',
   'click',
+  'move',
+  'drag',
   'type',
   'key',
   'scroll',
+  'clipboard_read',
+  'clipboard_write',
   'record_start',
   'record_stop',
   'stop_all'
 ]);
+
+/** Owner-visible product capabilities reported by status/capabilities. */
+export const CAPABILITY_FLAGS = Object.freeze({
+  selectedWindowControl: true,
+  fullDesktopMode: false,
+  accessibilitySnapshot: true,
+  dragPaths: true,
+  horizontalScroll: true,
+  clipboard: true,
+  fileOperations: false,
+  terminalExecution: false,
+  launchApplications: false,
+  multiMonitorCapture: false,
+  uacBypass: false
+});
 
 export function isCommand(value) {
   return COMMANDS.includes(String(value || ''));

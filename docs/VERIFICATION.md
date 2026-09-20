@@ -4,16 +4,17 @@ This is a development baseline. The relay has not been deployed or paired, and r
 
 ## Verified on Windows
 
-- 73 automated tests passed, including 14 real Miniflare HTTP/WebSocket relay tests; generated Worker types, TypeScript and the MCP stdio smoke passed.
+- 80 automated tests passed, including 14 real Miniflare HTTP/WebSocket relay tests; generated Worker types, TypeScript and the MCP stdio smoke passed.
 - A scheduled owner window automatically started and stopped the real host controller and relay client with a simulated native executor.
 - An owned Notepad fixture passed real target capture, typing verified through Windows UI Automation, PAUSE denial, emergency STOP denial and rearm lockout. The fixture was closed afterward.
 - Source and packaged desktop UI passed OFF startup, stop/unlock, target-required denial, disabled startup/remote defaults, actual Windows-encrypted credential storage and sandboxed renderers.
+- The synthetic onboarding GUI passed 22 checks using the actual host HTML, renderer and preload: masked password-field pairing, invalid pairing rejection, cleared secret paste, readiness derived from saved settings, keyboard tabs, stable tab selection during status updates, countdown, pause and STOP, and STOP during a pending save. Layout checks passed at 980px, 760px and 490 × 380px. The smallest viewport tests CSS reflow, not native operating-system zoom. This fixture uses in-memory IPC and makes no real network requests or desktop-control calls.
 - The phone dashboard passed at 390px: no horizontal overflow, next6AM–6PM defaults, timezone, eight-hour access, screenshot preview, pause, invalid-duration rejection, scheduled countdown and cancellation.
 - Synthetic frames produced a playable WebM. This proves the recorder pipeline, not smooth or real-browser video.
 - The portable launcher passed an ordinary launch without debugger or GPU flags, and the bundled app passed its UI checks and graceful quit.
 - Runtime dependency audit reported zero vulnerabilities. The development-only Miniflare/Sharp chain reported three high-severity advisory entries; those packages are not the shipped host runtime.
 
-Screenshots shown in the README contain only synthetic, unconfigured application state. Raw desktop captures, local reports, process identifiers and machine paths are excluded from publication.
+Screenshots shown in the README come from synthetic first-run and phone dashboard fixtures. They do not show a live pairing. Raw desktop captures, local reports, process identifiers and machine paths are excluded from publication.
 
 ## This change (focus + empty-save)
 
@@ -27,6 +28,7 @@ Run from a Windows clone after installing dependencies:
 npm ci
 npm run check
 node scripts/desktop-smoke.mjs
+node scripts/onboarding-smoke.mjs
 node scripts/phone-dashboard-smoke.mjs
 node scripts/recording-smoke.mjs
 npm run build:win

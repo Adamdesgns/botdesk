@@ -51,13 +51,23 @@ public static class BotDeskNative {
   [DllImport("wtsapi32.dll")] static extern void WTSFreeMemory(IntPtr memory);
   public delegate bool EnumWindowProc(IntPtr hwnd,IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr data);
-  static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad" };
+  static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad","robloxstudiobeta" };
   static readonly Regex Denied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac|regedit|powershell|terminal|devtools)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|registry\s*editor|task\s*manager|device\s*manager|control\s*panel|group\s*policy|developer\s*tools|command\s*prompt",RegexOptions.IgnoreCase);
-  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+Z","ALT+LEFT","ALT+RIGHT","F5" };
+  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
-    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"Z",0x5A},{"LEFT",0x25},{"RIGHT",0x27}
+    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
   };
-  static Exception Block(string reason) { return new InvalidOperationException(reason); }
+  sealed class GuardFailure : Exception {
+    public GuardFailure(string reason) : base(reason) { }
+  }
+  static Exception Block(string reason) { return new GuardFailure(reason); }
+  public static string SafeError(Exception error) {
+    // Only our own fixed guard codes may cross the process boundary.
+    // Native/UI Automation exception messages may contain private window content.
+    for(int depth=0; error!=null && depth<12; depth++,error=error.InnerException)
+      if(error is GuardFailure) return error.Message;
+    return "native-action-blocked";
+  }
   public static void Init() { SetProcessDPIAware(); }
   static string DesktopName(IntPtr handle) {
     if(handle==IntPtr.Zero) return "unknown";
@@ -165,7 +175,20 @@ public static class BotDeskNative {
   }
   public static void Focus(string handle,uint pid) {
     IntPtr hwnd=Check(handle,pid,false);
-    if(!SetForegroundWindow(hwnd)) throw Block("focus-refused");
+    // A background host may be refused by SetForegroundWindow. Ask the selected
+    // app's accessibility provider to focus it, then verify the actual foreground.
+    // Never attach input queues, synthesize Alt, or relax any target safety check.
+    if(GetForegroundWindow()!=hwnd && !SetForegroundWindow(hwnd)) {
+      Check(handle,pid,false);
+      try { AutomationElement.FromHandle(hwnd).SetFocus(); }
+      catch { throw Block("focus-refused"); }
+    }
+    var wait=Stopwatch.StartNew();
+    while(GetForegroundWindow()!=hwnd && wait.ElapsedMilliseconds<1000) {
+      BasicCheck(hwnd,pid,false);
+      System.Threading.Thread.Sleep(25);
+    }
+    if(GetForegroundWindow()!=hwnd) throw Block("focus-refused");
     Check(handle,pid,true);
   }
   public static Dictionary<string,object> Capture(string handle,uint pid) {
@@ -173,20 +196,42 @@ public static class BotDeskNative {
     if(!GetWindowRect(hwnd,out before)) throw Block("geometry-unavailable");
     int width=before.Right-before.Left, height=before.Bottom-before.Top;
     if(width<1 || height<1 || width>7680 || height>4320 || (long)width*height>16000000) throw Block("capture-size-blocked");
-    string image;
+    string image; string mimeType;
     using(var bitmap=new Bitmap(width,height,PixelFormat.Format32bppArgb)) {
       using(var graphics=Graphics.FromImage(bitmap)) {
         IntPtr dc=graphics.GetHdc();
         try { if(!PrintWindow(hwnd,dc,2)) throw Block("window-capture-unavailable"); }
         finally { graphics.ReleaseHdc(dc); }
       }
-      using(var stream=new MemoryStream()) { bitmap.Save(stream,ImageFormat.Png); if(stream.Length>16000000) throw Block("capture-size-blocked"); image=Convert.ToBase64String(stream.ToArray()); }
+      // Prefer JPEG for large Studio/game windows: PNG base64 previously completed
+      // locally then timed out crossing the relay frame budget.
+      bool useJpeg = width*height >= 900000 || width >= 1600 || height >= 1200;
+      using(var stream=new MemoryStream()) {
+        if(useJpeg) {
+          ImageCodecInfo jpeg = null;
+          foreach(var codec in ImageCodecInfo.GetImageEncoders()) {
+            if(codec.FormatID == ImageFormat.Jpeg.Guid) { jpeg = codec; break; }
+          }
+          if(jpeg == null) throw Block("capture-encoder-unavailable");
+          using(var parameters = new EncoderParameters(1)) {
+            parameters.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 80L);
+            bitmap.Save(stream, jpeg, parameters);
+          }
+          mimeType = "image/jpeg";
+        } else {
+          bitmap.Save(stream, ImageFormat.Png);
+          mimeType = "image/png";
+        }
+        if(stream.Length>6000000) throw Block("capture-size-blocked");
+        image=Convert.ToBase64String(stream.ToArray());
+        if(image.Length>7500000) throw Block("capture-size-blocked");
+      }
     }
     Check(handle,pid,true); RECT after; GetWindowRect(hwnd,out after);
     if(before.Left!=after.Left || before.Top!=after.Top || before.Right!=after.Right || before.Bottom!=after.Bottom) throw Block("target-moved-during-capture");
     var window=Describe(hwnd,true);
     if(!(bool)window["automationChecked"] || (bool)window["passwordPresent"] || (bool)window["passwordFocused"]) throw Block("password-control");
-    return new Dictionary<string,object>{{"ok",true},{"window",window},{"geometry",window["geometry"]},{"image",new Dictionary<string,object>{{"mimeType","image/png"},{"data",image},{"width",width},{"height",height}}}};
+    return new Dictionary<string,object>{{"ok",true},{"window",window},{"geometry",window["geometry"]},{"image",new Dictionary<string,object>{{"mimeType",mimeType},{"data",image},{"width",width},{"height",height}}}};
   }
   public static Dictionary<string,object> Snapshot(string handle,uint pid) {
     IntPtr hwnd=Check(handle,pid,true);
@@ -214,12 +259,172 @@ public static class BotDeskNative {
     var element=AutomationElement.FromPoint(new System.Windows.Point(x,y));
     if(element==null || element.Current.ProcessId!=(int)pid || element.Current.IsPassword) throw Block("point-control-blocked");
   }
-  public static void Click(string handle,uint pid,int x,int y) {
+  public static void Click(string handle,uint pid,int x,int y,string button,int count) {
     IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
     if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
-    INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=2;
-    INPUT up=down; up.U.mi.dwFlags=4; Emit(new INPUT[]{down,up});
+    uint downFlag=2, upFlag=4;
+    if(String.Equals(button,"right",StringComparison.OrdinalIgnoreCase)) { downFlag=0x0008; upFlag=0x0010; }
+    else if(String.Equals(button,"middle",StringComparison.OrdinalIgnoreCase)) { downFlag=0x0020; upFlag=0x0040; }
+    else if(!String.IsNullOrEmpty(button) && !String.Equals(button,"left",StringComparison.OrdinalIgnoreCase)) throw Block("invalid-button");
+    if(count<1 || count>2) throw Block("invalid-click-count");
+    for(int i=0;i<count;i++) {
+      INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=downFlag;
+      INPUT up=down; up.U.mi.dwFlags=upFlag; Emit(new INPUT[]{down,up});
+    }
+  }
+  public static void Move(string handle,uint pid,int x,int y) {
+    IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
+    if(!SetCursorPos(x,y)) throw Block("cursor-failed");
+    Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
+  }
+  static readonly object DragLock=new object();
+  static bool DragHeld=false, DragCancelled=false;
+  static string DragCancelReason="drag-cancelled";
+  static readonly bool DragTimingEnabled=Environment.GetEnvironmentVariable("BOTDESK_DRAG_TIMING")=="1";
+  static Stopwatch DragTimingClock;
+  static int DragTimingChecks=0,DragTimingMoves=0,DragTimingLines=0;
+  // Opt-in diagnostics contain only fixed numeric measurements, never target,
+  // coordinates, path, text, tokens, or native exception strings. Bound output.
+  static void DragTiming(int phase,long costMs,long targetMs,long pointMs,int completed) {
+    if(!DragTimingEnabled || System.Threading.Interlocked.Increment(ref DragTimingLines)>256) return;
+    try {
+      Console.Error.WriteLine("BOTDESK_DRAG_TIMING {\"phase\":"+phase+",\"checkCount\":"+DragTimingChecks+",\"moveCount\":"+DragTimingMoves+",\"elapsedMs\":"+(DragTimingClock==null?0:DragTimingClock.ElapsedMilliseconds)+",\"costMs\":"+costMs+",\"targetMs\":"+targetMs+",\"pointMs\":"+pointMs+",\"completed\":"+completed+"}");
+    } catch { /* Diagnostic failure must not affect input cleanup. */ }
+  }
+  static void DragProgress(string state) { Console.Out.WriteLine("{\"dragProgress\":\""+state+"\"}"); Console.Out.Flush(); }
+  static void ReleaseDragLocked() {
+    if(!DragHeld) return;
+    INPUT up=new INPUT(); up.type=0; up.U.mi.dwFlags=4;
+    Emit(new INPUT[]{up}); DragHeld=false; DragProgress("button-released");
+  }
+  // Safety-only entry point used after the original helper has exited. It cannot
+  // press a button, move the cursor, type, or select another target.
+  public static void ReleaseLeft() { INPUT up=new INPUT(); up.type=0; up.U.mi.dwFlags=4; Emit(new INPUT[]{up}); }
+  static void CancelDrag(string reason) {
+    lock(DragLock) {
+      DragCancelled=true; DragCancelReason=reason;
+      try { ReleaseDragLocked(); } catch { /* finally/parent cleanup retries */ }
+    }
+    DragTiming(reason=="drag-deadline"?4:7,0,0,0,DragHeld?0:1);
+  }
+  static void DragCanContinue() { if(DragCancelled) throw Block(DragCancelReason); }
+  static void DragCheck(string handle,uint pid,string title,int left,int top,int width,int height,int x,int y) {
+    var timing=DragTimingEnabled?Stopwatch.StartNew():null;
+    long targetMs=0,pointMs=0; int completed=0;
+    if(DragTimingEnabled) System.Threading.Interlocked.Increment(ref DragTimingChecks);
+    try {
+      lock(DragLock) { DragCanContinue(); }
+      IntPtr hwnd; var part=DragTimingEnabled?Stopwatch.StartNew():null;
+      try { hwnd=Check(handle,pid,true); } finally { if(part!=null) targetMs=part.ElapsedMilliseconds; }
+      RECT rect;
+      if(!GetWindowRect(hwnd,out rect) || rect.Left!=left || rect.Top!=top || rect.Right-rect.Left!=width || rect.Bottom-rect.Top!=height) throw Block("target-moved-during-drag");
+      var currentTitle=new StringBuilder(1024); GetWindowText(hwnd,currentTitle,currentTitle.Capacity);
+      if(!String.Equals(currentTitle.ToString(),title,StringComparison.Ordinal)) throw Block("target-title-changed");
+      if(part!=null) part.Restart();
+      try { PointCheck(hwnd,pid,x,y); } finally { if(part!=null) pointMs=part.ElapsedMilliseconds; }
+      ModifiersReleased();
+      lock(DragLock) { DragCanContinue(); }
+      completed=1;
+    } finally { if(timing!=null) DragTiming(1,timing.ElapsedMilliseconds,targetMs,pointMs,completed); }
+  }
+  // UI Automation checks can take longer than one 32ms interpolation interval.
+  // Budget that observed cost before the next move and discard only overdue
+  // interpolated samples; every caller-supplied waypoint still gets checked.
+  static void RunDragSchedule(int segments,int durationMs,long checkBudgetMs,Func<long> elapsed,Action<int> wait,Action<int,double> check,Action<int,double> move,Action canContinue) {
+    int perSegment=Math.Max(1,(int)Math.Ceiling((double)durationMs/segments/32.0));
+    int steps=segments*perSegment;
+    checkBudgetMs=Math.Max(1,checkBudgetMs);
+    for(int step=1;step<=steps;step++) {
+      canContinue();
+      int waypoint=((step-1)/perSegment+1)*perSegment;
+      long waypointDue=(long)durationMs*waypoint/steps;
+      long projected=(long)Math.Ceiling((double)(elapsed()+checkBudgetMs)*steps/durationMs);
+      // An interpolated move requires its own check AND the upcoming waypoint's
+      // check. Reserve both; otherwise a near-end sample consumes the final
+      // waypoint's budget even when its full check is already known to be slow.
+      step=waypointDue-elapsed()<=2*checkBudgetMs?waypoint:(int)Math.Min(waypoint,Math.Max((long)step,projected));
+      long due=(long)durationMs*step/steps;
+      long begin=Math.Max(0,due-checkBudgetMs);
+      while(elapsed()<begin) {
+        canContinue();
+        wait((int)Math.Max(1,Math.Min(10,begin-elapsed())));
+      }
+      int segment=(step-1)/perSegment;
+      double fraction=(double)((step-1)%perSegment+1)/perSegment;
+      long started=elapsed();
+      check(segment,fraction);
+      canContinue();
+      move(segment,fraction);
+      checkBudgetMs=Math.Max(checkBudgetMs,elapsed()-started);
+    }
+    // A conservative latency estimate may reach the endpoint early. Preserve
+    // the requested hold duration without extra moves or another full UIA pass.
+    while(elapsed()<durationMs) {
+      canContinue();
+      wait((int)Math.Max(1,Math.Min(10,durationMs-elapsed())));
+    }
+    canContinue();
+  }
+  public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
+    if(DragTimingEnabled) DragTimingClock=Stopwatch.StartNew();
+    if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
+    for(int i=0;i<xs.Length;i++) {
+      if(xs[i]<0 || ys[i]<0 || xs[i]>=width || ys[i]>=height || xs[i]>32767 || ys[i]>32767 || (i>0 && xs[i]==xs[i-1] && ys[i]==ys[i-1])) throw Block("invalid-drag-point");
+      if((long)left+xs[i]>Int32.MaxValue || (long)left+xs[i]<Int32.MinValue || (long)top+ys[i]>Int32.MaxValue || (long)top+ys[i]<Int32.MinValue) throw Block("invalid-drag-point");
+    }
+    // EOF also cancels: a vanished host must not leave the button down.
+    var cancelReader=new System.Threading.Thread(delegate() { try { Console.In.ReadLine(); } catch { } CancelDrag("drag-cancelled"); });
+    cancelReader.IsBackground=true; cancelReader.Start();
+    System.Threading.Timer deadline=null;
+    try {
+      DragCheck(handle,pid,title,left,top,width,height,left+xs[0],top+ys[0]);
+      if((GetAsyncKeyState(0x01)&0x8000)!=0) throw Block("physical-button-held");
+      lock(DragLock) {
+        DragCanContinue();
+        if(!SetCursorPos(left+xs[0],top+ys[0])) throw Block("cursor-failed");
+      }
+      var checkCost=Stopwatch.StartNew();
+      DragCheck(handle,pid,title,left,top,width,height,left+xs[0],top+ys[0]);
+      checkCost.Stop();
+      var elapsed=Stopwatch.StartNew();
+      lock(DragLock) {
+        DragCanContinue();
+        // Mark before SendInput: a partial native failure still requires release.
+        DragHeld=true; DragProgress("button-held");
+        INPUT down=new INPUT(); down.type=0; down.U.mi.dwFlags=2; Emit(new INPUT[]{down});
+        // Independent timer can release even if a UI Automation call stalls.
+        deadline=new System.Threading.Timer(delegate(object unused) { CancelDrag("drag-deadline"); },null,durationMs+250,System.Threading.Timeout.Infinite);
+      }
+      DragTiming(2,0,0,0,1);
+      RunDragSchedule(xs.Length-1,durationMs,checkCost.ElapsedMilliseconds,
+        delegate() { return elapsed.ElapsedMilliseconds; },
+        delegate(int ms) { System.Threading.Thread.Sleep(ms); },
+        delegate(int segment,double fraction) {
+          int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
+          int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
+          DragCheck(handle,pid,title,left,top,width,height,x,y);
+        },
+        delegate(int segment,double fraction) {
+          int x=left+(int)Math.Round(xs[segment]+(xs[segment+1]-xs[segment])*fraction);
+          int y=top+(int)Math.Round(ys[segment]+(ys[segment+1]-ys[segment])*fraction);
+          lock(DragLock) {
+            DragCanContinue();
+            if(elapsed.ElapsedMilliseconds>durationMs+250) throw Block("drag-deadline");
+            if(!SetCursorPos(x,y)) throw Block("cursor-failed");
+          }
+          if(DragTimingEnabled) System.Threading.Interlocked.Increment(ref DragTimingMoves);
+          DragTiming(3,0,0,0,1);
+        },
+        delegate() { lock(DragLock) { DragCanContinue(); } });
+      // The final waypoint was fully checked before its move and the requested
+      // hold duration has elapsed. Release without another full UIA pass that
+      // would spend the independent release margin.
+    } finally {
+      if(deadline!=null) deadline.Dispose();
+      lock(DragLock) { ReleaseDragLocked(); }
+      DragTiming(5,0,0,0,DragHeld?0:1);
+    }
   }
   public static void TypeText(string handle,uint pid,string text) {
     if(String.IsNullOrEmpty(text) || text.Length>4000 || Regex.IsMatch(text,@"[\x00-\x1f\x7f]|(?:javascript|vbscript|data|file|shell|ms-settings|powershell):",RegexOptions.IgnoreCase)) throw Block("invalid-text");
@@ -239,20 +444,57 @@ public static class BotDeskNative {
     for(int index=parts.Length-1;index>=0;index--) { INPUT up=new INPUT(); up.type=1; up.U.ki.wVk=Keys[parts[index]]; up.U.ki.dwFlags=2; items.Add(up); }
     Check(handle,pid,true); Emit(items.ToArray());
   }
-  public static void Scroll(string handle,uint pid,int deltaY) {
-    if(deltaY==0 || Math.Abs((long)deltaY)>1200) throw Block("invalid-scroll");
+  public static void Scroll(string handle,uint pid,int deltaY,int deltaX) {
+    if((deltaY==0 && deltaX==0) || Math.Abs((long)deltaY)>1200 || Math.Abs((long)deltaX)>1200) throw Block("invalid-scroll");
     IntPtr hwnd=Check(handle,pid,true); ModifiersReleased();
     RECT rect; GetWindowRect(hwnd,out rect); int x=rect.Left+(rect.Right-rect.Left)/2,y=rect.Top+(rect.Bottom-rect.Top)/2;
     PointCheck(hwnd,pid,x,y); if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
-    INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x0800; wheel.U.mi.mouseData=unchecked((uint)-deltaY); Emit(new INPUT[]{wheel});
+    if(deltaY!=0) {
+      INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x0800; wheel.U.mi.mouseData=unchecked((uint)-deltaY); Emit(new INPUT[]{wheel});
+    }
+    if(deltaX!=0) {
+      INPUT wheel=new INPUT(); wheel.type=0; wheel.U.mi.dwFlags=0x1000; wheel.U.mi.mouseData=unchecked((uint)deltaX); Emit(new INPUT[]{wheel});
+    }
+  }
+  public static Dictionary<string,object> Monitors() {
+    var list=new List<Dictionary<string,object>>();
+    int index=0;
+    foreach(var screen in System.Windows.Forms.Screen.AllScreens) {
+      list.Add(new Dictionary<string,object>{
+        {"index",index++},
+        {"primary",screen.Primary},
+        {"bounds",new Dictionary<string,object>{{"x",screen.Bounds.X},{"y",screen.Bounds.Y},{"width",screen.Bounds.Width},{"height",screen.Bounds.Height}}},
+        {"workingArea",new Dictionary<string,object>{{"x",screen.WorkingArea.X},{"y",screen.WorkingArea.Y},{"width",screen.WorkingArea.Width},{"height",screen.WorkingArea.Height}}},
+        {"deviceName",screen.DeviceName??""}
+      });
+    }
+    return new Dictionary<string,object>{{"ok",true},{"monitors",list}};
+  }
+  public static Dictionary<string,object> ClipboardRead() {
+    string text="";
+    try { if(System.Windows.Forms.Clipboard.ContainsText()) text=System.Windows.Forms.Clipboard.GetText()??""; }
+    catch { throw Block("clipboard-unavailable"); }
+    if(text.Length>4000) text=text.Substring(0,4000);
+    return new Dictionary<string,object>{{"ok",true},{"text",text}};
+  }
+  public static void ClipboardWrite(string text) {
+    if(String.IsNullOrEmpty(text) || text.Length>4000) throw Block("invalid-clipboard-text");
+    try { System.Windows.Forms.Clipboard.SetText(text); }
+    catch { throw Block("clipboard-unavailable"); }
   }
 }
 '@
 
 try {
-  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing
-  $references = @([System.Drawing.Bitmap].Assembly.Location, [System.Windows.Automation.AutomationElement].Assembly.Location, [System.Windows.Automation.TreeScope].Assembly.Location, [System.Windows.Point].Assembly.Location)
+  Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, WindowsBase, System.Drawing, System.Windows.Forms
+  $references = @(
+    [System.Drawing.Bitmap].Assembly.Location,
+    [System.Windows.Automation.AutomationElement].Assembly.Location,
+    [System.Windows.Automation.TreeScope].Assembly.Location,
+    [System.Windows.Point].Assembly.Location,
+    [System.Windows.Forms.Screen].Assembly.Location
+  )
   Add-Type -TypeDefinition $source -ReferencedAssemblies $references -Language CSharp
   if ($CompileOnly) { @{ ok = $true; compiled = $true } | ConvertTo-Json -Compress; return }
   [BotDeskNative]::Init()
@@ -261,9 +503,16 @@ try {
   $request = $line | ConvertFrom-Json
   $action = [string]$request.action
   $inputArgs = $request.args
-  if ($action -in @('foreground', 'list_windows')) {
+  if ($action -eq 'release_left') {
+    [BotDeskNative]::ReleaseLeft(); $result = @{ ok = $true }
+  } elseif ($action -in @('foreground', 'list_windows', 'list_monitors', 'clipboard_read')) {
     if ($action -eq 'foreground') { $result = @{ ok = $true; window = [BotDeskNative]::Foreground() } }
-    else { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
+    elseif ($action -eq 'list_windows') { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
+    elseif ($action -eq 'list_monitors') { $result = [BotDeskNative]::Monitors() }
+    else { $result = [BotDeskNative]::ClipboardRead() }
+  } elseif ($action -eq 'clipboard_write') {
+    if ($inputArgs.text -isnot [string]) { throw 'invalid-clipboard-text' }
+    [BotDeskNative]::ClipboardWrite([string]$inputArgs.text); $result = @{ ok = $true }
   } else {
     if ($null -eq $inputArgs.expectedWindow -or [string]$inputArgs.expectedWindow.handle -notmatch '^[1-9][0-9]{0,18}$' -or $inputArgs.expectedWindow.processId -isnot [int] -or $inputArgs.expectedWindow.processId -le 0) { throw 'invalid-target' }
     $targetHandle = [string]$inputArgs.expectedWindow.handle
@@ -274,21 +523,41 @@ try {
       'snapshot' { $result = [BotDeskNative]::Snapshot($targetHandle,$targetPid) }
       'click' {
         if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-point' }
-        [BotDeskNative]::Click($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
+        $button = if ($null -eq $inputArgs.button) { 'left' } else { [string]$inputArgs.button }
+        $count = if ($null -eq $inputArgs.count) { 1 } else { [int]$inputArgs.count }
+        [BotDeskNative]::Click($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y,$button,$count); $result = @{ ok = $true }
+      }
+      'move' {
+        if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-point' }
+        [BotDeskNative]::Move($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
+      }
+      'drag' {
+        if (@($inputArgs.PSObject.Properties.Name | Where-Object { $_ -notin @('snapshotId','expectedWindow','geometry','snapshotTitle','points','durationMs') }).Count -gt 0) { throw 'invalid-drag' }
+        if ($inputArgs.snapshotId -isnot [string] -or $inputArgs.snapshotId.Length -lt 1 -or $inputArgs.snapshotId.Length -gt 128 -or $inputArgs.snapshotTitle -isnot [string]) { throw 'invalid-drag' }
+        if ($inputArgs.durationMs -isnot [int] -or $inputArgs.durationMs -lt 100 -or $inputArgs.durationMs -gt 2000 -or $inputArgs.points -isnot [array] -or $inputArgs.points.Count -lt 2 -or $inputArgs.points.Count -gt 64) { throw 'invalid-drag' }
+        foreach ($field in @('x','y','width','height')) { if ($inputArgs.geometry.$field -isnot [int]) { throw 'invalid-geometry' } }
+        $dragXs = New-Object 'System.Collections.Generic.List[int]'; $dragYs = New-Object 'System.Collections.Generic.List[int]'
+        foreach ($point in $inputArgs.points) {
+          if ($null -eq $point -or @($point.PSObject.Properties.Name).Count -ne 2 -or $point.x -isnot [int] -or $point.y -isnot [int] -or @($point.PSObject.Properties.Name | Where-Object { $_ -notin @('x','y') }).Count -gt 0) { throw 'invalid-drag-point' }
+          $dragXs.Add($point.x); $dragYs.Add($point.y)
+        }
+        [BotDeskNative]::Drag($targetHandle,$targetPid,$inputArgs.snapshotTitle,$inputArgs.geometry.x,$inputArgs.geometry.y,$inputArgs.geometry.width,$inputArgs.geometry.height,$dragXs.ToArray(),$dragYs.ToArray(),$inputArgs.durationMs)
+        $result = @{ ok = $true }
       }
       'type' { if ($inputArgs.text -isnot [string]) { throw 'invalid-text' }; [BotDeskNative]::TypeText($targetHandle,$targetPid,$inputArgs.text); $result = @{ ok = $true } }
       'key' { [BotDeskNative]::Press($targetHandle,$targetPid,([string]$inputArgs.key).ToUpperInvariant()); $result = @{ ok = $true } }
       'scroll' {
-        if ($inputArgs.deltaY -isnot [int]) { throw 'invalid-scroll' }
-        [BotDeskNative]::Scroll($targetHandle,$targetPid,$inputArgs.deltaY); $result = @{ ok = $true }
+        $deltaY = if ($null -eq $inputArgs.deltaY) { 0 } else { [int]$inputArgs.deltaY }
+        $deltaX = if ($null -eq $inputArgs.deltaX) { 0 } else { [int]$inputArgs.deltaX }
+        [BotDeskNative]::Scroll($targetHandle,$targetPid,$deltaY,$deltaX); $result = @{ ok = $true }
       }
       default { throw 'unknown-action' }
     }
   }
   $result | ConvertTo-Json -Compress -Depth 12
 } catch {
-  # UI Automation exceptions can include window text. Only pass through known, constant Block() codes.
-  $reason = try { [string]$_.Exception.GetBaseException().Message } catch { '' }
-  if ($reason -cnotin @('focus-refused', 'target-not-foreground')) { $reason = 'native-action-blocked' }
-  @{ ok = $false; error = $reason } | ConvertTo-Json -Compress
+  # Error details from UI Automation can include sensitive content. Keep the transport error generic.
+  $safeError = 'native-action-blocked'
+  if ('BotDeskNative' -as [type]) { $safeError = [BotDeskNative]::SafeError($_.Exception) }
+  @{ ok = $false; error = $safeError } | ConvertTo-Json -Compress
 }

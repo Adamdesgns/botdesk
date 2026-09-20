@@ -11,7 +11,7 @@ const FRAME_LIMIT = 10 * 1024 * 1024;
 const COMMAND_TIMEOUT = 20_000;
 const STATE_TIMEOUT = 5_000;
 const HEARTBEAT_TIMEOUT = 30_000;
-const COMMANDS = new Set(['status', 'screenshot', 'snapshot', 'list_windows', 'focus', 'click', 'type', 'key', 'scroll', 'record_start', 'record_stop', 'stop_all']);
+const COMMANDS = new Set(['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'focus', 'click', 'move', 'drag', 'type', 'key', 'scroll', 'clipboard_read', 'clipboard_write', 'record_start', 'record_stop', 'stop_all']);
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,96}$/;
 function json(data: unknown, status = 200): Response {
@@ -223,7 +223,7 @@ export class BotDeskSession extends DurableObject<Env> {
     if (!['owner', 'bot'].includes(role) || !await this.authorized(token, role)) return json({ error: 'unauthorized' }, 401);
     const name = body.name;
     if (typeof name !== 'string' || !COMMANDS.has(name) || (body.args !== undefined && !isRecord(body.args))) return json({ error: 'invalid-command' }, 400);
-    if (role === 'owner' && !['status', 'screenshot', 'snapshot', 'stop_all', 'record_stop'].includes(name)) return json({ error: 'owner-command-blocked' }, 403);
+    if (role === 'owner' && !['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'stop_all', 'record_stop'].includes(name)) return json({ error: 'owner-command-blocked' }, 403);
     if (role === 'bot' && (!/^[A-Za-z0-9_-]{1,80}$/.test(botId) || botId === 'owner-preview')) return json({ error: 'invalid-bot-id' }, 400);
     const replay = this.reserveId(requestId, name === 'stop_all' || name === 'record_stop'); if (replay) return replay;
     if (name === 'status') return json({ ok: true, result: this.status() });
