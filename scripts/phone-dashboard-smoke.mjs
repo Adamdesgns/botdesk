@@ -13,10 +13,11 @@ import { _electron } from 'playwright-core';
 const compiled = await build({ entryPoints: ['relay/src/dashboard.ts'], write: false, bundle: true, format: 'esm', platform: 'node', target: 'es2022' });
 const { dashboardHtml } = await import('data:text/javascript;base64,' + Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 const token = randomBytes(32).toString('base64url');
+let botToken = randomBytes(32).toString('base64url');
 const host = 'phone-smoke-only';
 const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
 const requests = [], fixtureErrors = [];
-let delayList=false, releaseList, delayCapture=false, releaseCapture;
+let delayList=false, releaseList, delayCapture=false, releaseCapture, delaySecret=false, releaseSecret;
 const candidates=[{candidateId:randomUUID(),processName:'msedge',processId:123,handle:'1001',title:'Extensions'},{candidateId:randomUUID(),processName:'msedge',processId:456,handle:'2002',title:'Select the extension directory. <img src=x onerror=alert(1)>'}];
 let state = { mode: 'off', hostOnline: true, activeBot: null, schedule: null, schedulePending: false, expiresAt: null, liveEndsAt: null };
 const server = createServer(async (request, response) => {
@@ -48,6 +49,14 @@ const server = createServer(async (request, response) => {
     } else if (route === 'target' && request.method === 'POST') {
       if(body.action==='list'){state={...state,mode:'off',expiresAt:null,liveEndsAt:null,schedule:null,schedulePending:false};if(delayList)await new Promise(resolve=>{releaseList=resolve;});result={ok:true,result:{windows:candidates,expiresAt:Date.now()+60000}};}
       else {assert.equal(body.action,'approve');assert.equal(body.candidateId,candidates[1].candidateId);assert.equal(body.temporary,true);state={...state,target:{state:'ready',window:candidates[1],temporaryUntil:Date.now()+300000}};result={ok:true,result:{mode:'off'}};}
+    } else if (route === 'bot-token' && request.method === 'POST') {
+      assert.deepEqual(body, {});
+      if(delaySecret)await new Promise(resolve=>{releaseSecret=resolve;});
+      result={botToken};
+    } else if (route === 'rotate-bot-token' && request.method === 'POST') {
+      assert.deepEqual(body,{});
+      botToken=randomBytes(32).toString('base64url');
+      result={botToken,rotated:true};
     } else if (route === 'command' && request.method === 'POST') {
       assert.equal(body.name, 'screenshot'); assert.deepEqual(body.args, {});
       if(delayCapture)await new Promise(resolve=>{releaseCapture=resolve;});
@@ -79,6 +88,24 @@ try {
   assert.equal(new Date(end).getTime() - new Date(start).getTime(), 12 * 3600_000);
   assert.match(await page.locator('#timezone').textContent(), /^Times on this phone: .+/);
   assert.equal(await page.locator('#preview').isDisabled(), true);
+  assert.equal(await page.locator('#bot-token-text').textContent(),'••••••••••••••••');
+  assert.equal(await page.locator('#copy-bot-token').isDisabled(),true);
+
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#rotate-bot-token').click();
+  await page.waitForFunction(()=>document.querySelector('#copy-bot-token').disabled===false);
+  assert.equal(await page.locator('#bot-token-text').textContent(),botToken);
+  await page.locator('#show-bot-token').click();
+  assert.equal(await page.locator('#bot-token-text').textContent(),'••••••••••••••••');
+  await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{window.__copiedBotToken=value}}}));
+  await page.locator('#show-bot-token').click();
+  await page.waitForFunction(()=>document.querySelector('#copy-bot-token').disabled===false);
+  assert.equal(await page.locator('#bot-token-text').textContent(),botToken);
+  await page.locator('#copy-bot-token').click();
+  assert.equal(await page.evaluate(()=>window.__copiedBotToken),botToken);
+  await page.locator('#show-bot-token').click();
+  assert.equal(await page.locator('#bot-token-text').textContent(),'••••••••••••••••');
+  assert.equal(await page.locator('#copy-bot-token').isDisabled(),true);
 
   await page.locator('[data-action="armed"]').click();
   await page.waitForFunction(() => document.querySelector('#mode').textContent === 'LIVE');
@@ -147,10 +174,17 @@ try {
   releaseList();
   await page.waitForFunction(()=>!targetBusy);
   assert.equal(await page.locator('#target-review').isVisible(),false,'Late window list after STOP must stay hidden');
+  delaySecret=true;
+  await page.locator('#show-bot-token').click();
+  await page.waitForTimeout(50);assert.equal(typeof releaseSecret,'function');
+  await page.locator('[data-action="off"]').click();
+  releaseSecret();
+  await page.waitForFunction(()=>!botTokenBusy);
+  assert.equal(await page.locator('#bot-token-text').textContent(),'••••••••••••••••','Late secret after STOP must stay hidden');
   const isolated = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => { const preferences = window.webContents.getLastWebPreferences(); return !window.isVisible() && preferences.sandbox && preferences.contextIsolation && !preferences.nodeIntegration; }));
   assert.equal(isolated, true);
   assert.deepEqual(pageErrors, []); assert.deepEqual(fixtureErrors, []);
-  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window', '320px-window-review', 'explicit-dialog-approval', 'temporary-five-minute-cap', 'untrusted-title-as-text', 'late-snapshot-after-stop-hidden', 'late-review-after-stop-hidden'], screenshot: 'evidence/phone-schedule.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
+  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window', '320px-window-review', 'explicit-dialog-approval', 'temporary-five-minute-cap', 'untrusted-title-as-text', 'late-snapshot-after-stop-hidden', 'late-review-after-stop-hidden', 'owner-token-masked-by-default', 'explicit-show-and-copy', 'owner-confirmed-rotation', 'hide-clears-dom', 'late-token-after-stop-hidden'], screenshot: 'evidence/phone-schedule.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
   await fs.writeFile('evidence/phone-schedule-smoke.json', JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result, null, 2));
 } finally {

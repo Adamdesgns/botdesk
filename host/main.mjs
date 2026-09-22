@@ -9,6 +9,7 @@ import {RelayClient} from './relay-client.mjs';
 import {RecordingService} from './recording.mjs';
 import {listWindows,focus} from './windows.mjs';
 import {isAllowedWindow} from './guard.mjs';
+import {ownerBotToken,createOwnerBotToken} from './owner-secret.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url));
 let mainWindow,overlayWindow,controller,configStore,recorder,tray,quitting=false;
 let choices=[];let quitReady=false;let quitPending=false;
@@ -113,7 +114,12 @@ app.whenReady().then(()=>{
   recorder=new RecordingService({directory:path.join(app.getPath('userData'),'captures'),send});
   const executor=new DesktopExecutor({recorder});
   controller=new HostController({configStore,auditLog:new AuditLog(path.join(app.getPath('userData'),'logs')),executor});
-  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m),onOwnerTarget:m=>controller.ownerTarget(m)});
+  const pairingPath=process.env.BOTDESK_TEST_DATA?
+    path.join(process.env.BOTDESK_TEST_DATA,'botdesk-pairing.json'):
+    path.join(process.env.LOCALAPPDATA||path.join(process.env.USERPROFILE||'','AppData','Local'),'BotDesk-Setup','botdesk-pairing.json');
+  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m),
+    onOwnerTarget:m=>controller.ownerTarget(m),onOwnerSecret:()=>ownerBotToken(configStore,pairingPath),
+    onRotateOwnerSecret:()=>createOwnerBotToken(configStore)});
   controller.attachRelay(relay);
   mainWindow=lockedWindow({width:980,height:830,minWidth:760,minHeight:650,backgroundColor:'#0d0d0d',title:'BotDesk Host'});
   mainWindow.on('close',event=>{if(!quitting){event.preventDefault();mainWindow.hide();}});

@@ -5,7 +5,7 @@ import { canBotControl, clampMinutes, DEFAULT_STATE, effectiveState, normalizeMo
 type Secrets = { hostHash: string; ownerHash: string; botHash: string };
 type RecordValue = Record<string, unknown>;
 type OwnerSchedule = { id: string; startsAt: number; endsAt: number };
-type Pending = { id: string; kind: 'command' | 'state'; generation: number; mode?: string; expiresAt?: number | null; resolve: (value: Response) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { id: string; kind: 'command' | 'state' | 'secret' | 'rotation'; generation: number; mode?: string; expiresAt?: number | null; resolve: (value: Response) => void; timer: ReturnType<typeof setTimeout> };
 const HTTP_LIMIT = 16_384;
 const FRAME_LIMIT = 10 * 1024 * 1024;
 const COMMAND_TIMEOUT = 20_000;
@@ -268,6 +268,20 @@ export class BotDeskSession extends DurableObject<Env> {
       args: { action: body.action, candidateId: body.candidateId, temporary: body.temporary },
       expiresAt: Date.now() + COMMAND_TIMEOUT }, commandId);
   }
+  async ownerBotToken(token: string, requestId: string): Promise<Response> {
+    if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
+    const replay = this.reserveId(requestId); if (replay) return replay;
+    if (!this.host) return json({ error: 'host-offline' }, 503);
+    if (this.pending) return json({ error: 'host-busy' }, 409);
+    return this.sendAndWait('secret', { type: 'owner_secret', requestId }, requestId);
+  }
+  async rotateBotToken(token: string, requestId: string): Promise<Response> {
+    if (!await this.authorized(token, 'owner')) return json({error:'unauthorized'},401);
+    const replay = this.reserveId(requestId); if (replay) return replay;
+    if (!this.host) return json({error:'host-offline'},503);
+    if (this.pending) return json({error:'host-busy'},409);
+    return this.sendAndWait('rotation',{type:'owner_secret_rotate',requestId},requestId);
+  }
   private async authorized(token: string, role: 'owner' | 'bot' | 'host'): Promise<boolean> {
     if (!TOKEN.test(token) || !this.secrets) return false;
     return equalHash(await hashToken(token), this.secrets[`${role}Hash`]);
@@ -287,21 +301,22 @@ export class BotDeskSession extends DurableObject<Env> {
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      relayContractVersion: '1.2.0' };
+      relayContractVersion: '1.3.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);
     if (this.state.mode !== 'off' && current.mode === 'off') { this.forceOff('session-expired'); this.sendSafetyOff('session-expired'); }
     else this.state = current;
   }
-  private sendAndWait(kind: 'command' | 'state', payload: RecordValue, id: string, mode?: string, expiresAt?: number | null): Promise<Response> {
+  private sendAndWait(kind: 'command' | 'state' | 'secret' | 'rotation', payload: RecordValue, id: string, mode?: string, expiresAt?: number | null): Promise<Response> {
     return new Promise((resolve) => {
       const generation = this.generation;
       const timer = setTimeout(() => {
         if (this.pending?.id !== id) return;
-        this.pending = null; this.forceOff(`${kind}-timeout`); this.sendSafetyOff(`${kind}-timeout`);
-        resolve(json({ error: `${kind}-timeout`, ...this.status() }, 504));
-      }, kind === 'state' ? STATE_TIMEOUT : COMMAND_TIMEOUT);
+        this.pending = null;
+        if (kind !== 'secret' && kind !== 'rotation') { this.forceOff(`${kind}-timeout`); this.sendSafetyOff(`${kind}-timeout`); }
+        resolve(json(kind === 'secret' || kind === 'rotation' ? {error:`${kind}-timeout`} : {error:`${kind}-timeout`,...this.status()},504));
+      }, kind === 'state' ? STATE_TIMEOUT : kind === 'secret' || kind === 'rotation' ? 10_000 : COMMAND_TIMEOUT);
       this.pending = { id, kind, generation, mode, expiresAt, resolve, timer };
       try { this.host!.send(JSON.stringify(payload)); } catch { this.disconnectHost(this.host!, 'host-send-failed'); }
     });
@@ -372,6 +387,34 @@ export class BotDeskSession extends DurableObject<Env> {
     if (message.type === 'command_result' && pending.kind === 'command' && message.commandId === pending.id) {
       this.settle(message.ok === true ? json({ ok: true, result: message.result }) : json({ error: typeof message.error === 'string' ? message.error.slice(0, 160) : 'command-failed', message: typeof message.message === 'string' ? message.message.slice(0, 500) : undefined }, 409));
     }
+    if (message.type === 'owner_secret_result' && pending.kind === 'secret' && message.requestId === pending.id) {
+      if (message.ok !== true || typeof message.botToken !== 'string' || !TOKEN.test(message.botToken)) {
+        this.settle(json({error:'bot-token-unavailable'},409)); return;
+      }
+      const candidate = message.botToken;
+      this.ctx.waitUntil((async () => {
+        const matches = this.secrets && equalHash(await hashToken(candidate), this.secrets.botHash);
+        if (socket !== this.host || this.pending !== pending || pending.generation !== this.generation) return;
+        this.settle(matches ? json({botToken:candidate}) : json({error:'bot-token-mismatch'},409));
+      })());
+    }
+    if (message.type === 'owner_secret_rotate_result' && pending.kind === 'rotation' && message.requestId === pending.id) {
+      if (message.ok !== true || typeof message.botToken !== 'string' || !TOKEN.test(message.botToken)) {
+        this.settle(json({error:'bot-token-rotation-failed'},409)); return;
+      }
+      const candidate = message.botToken;
+      this.ctx.waitUntil((async () => {
+        if (!this.secrets || equalHash(await hashToken(candidate),this.secrets.hostHash) || equalHash(await hashToken(candidate),this.secrets.ownerHash)) {
+          this.settle(json({error:'bot-token-rotation-failed'},409)); return;
+        }
+        if (socket !== this.host || this.pending !== pending || pending.generation !== this.generation) return;
+        const next={...this.secrets,botHash:await hashToken(candidate)};
+        try {await this.ctx.storage.put('secrets',next);}
+        catch {this.settle(json({error:'bot-token-rotation-failed'},500));return;}
+        this.secrets=next;
+        if (this.pending === pending) this.settle(json({botToken:candidate,rotated:true}));
+      })());
+    }
   }
 }
 
@@ -393,7 +436,7 @@ export default {
       }
       const host = /^\/api\/host\/([a-z0-9][a-z0-9-]{0,63})\/socket$/.exec(url.pathname);
       if (host && request.method === 'GET') return sessionStub(env, host[1]).fetch(request);
-      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule|target)$/.exec(url.pathname);
+      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule|target|bot-token|rotate-bot-token)$/.exec(url.pathname);
       const bot = /^\/api\/bot\/([a-z0-9][a-z0-9-]{0,63})\/command$/.exec(url.pathname);
       if (owner || bot) {
         const token = bearer(request); if (!token) return json({ error: 'unauthorized' }, 401);
@@ -404,6 +447,8 @@ export default {
         if (owner?.[2] === 'state') return stub.ownerState(token, body, requestId);
         if (owner?.[2] === 'schedule') return stub.ownerSchedule(token, body, requestId);
         if (owner?.[2] === 'target') return stub.ownerTarget(token, body, requestId);
+        if (owner?.[2] === 'bot-token') return stub.ownerBotToken(token, requestId);
+        if (owner?.[2] === 'rotate-bot-token') return stub.rotateBotToken(token, requestId);
         return stub.command(token, owner ? 'owner' : 'bot', body, request.headers.get('x-bot-id') || '', requestId);
       }
       return json({ error: 'not-found' }, 404);

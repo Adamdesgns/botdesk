@@ -95,6 +95,68 @@ const botRoute = c => '/api/bot/' + c.hostId + '/command';
 const ownerRoute = c => '/api/owner/' + c.hostId;
 const command = (c, name, botId = 'bot-a', extras = {}) => api(botRoute(c), c.botToken, { name, args: {} }, { 'x-bot-id': botId, ...extras });
 
+test('only the owner can reveal the currently paired bot token through the live host',async t=>{
+  const c=await provision();
+  const config={...c,relayUrl:origin};
+  const client=new RelayClient({getConfig:()=>config,onCommand:async()=>({ok:false,error:'not-armed'}),
+    onOwnerState:async()=>({ok:false,error:'not-armed'}),onOwnerSecret:()=>c.botToken});
+  t.after(()=>client.disconnect());
+  const ready=new Promise(resolve=>client.on('status',s=>{if(s.authenticated)resolve();}));client.connect();await ready;
+  const route=ownerRoute(c)+'/bot-token';
+  assert.equal((await api(route,c.botToken,{})).status,401);
+  assert.equal((await api(route,c.hostToken,{})).status,401);
+  const requestId=randomUUID();
+  const result=await api(route,c.ownerToken,{}, {'x-request-id':requestId});
+  assert.equal(result.status,200);assert.equal(result.body.botToken,c.botToken);
+  assert.equal((await api(route,c.ownerToken,{}, {'x-request-id':requestId})).body.error,'request-replayed');
+  const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
+  const botStatus=(await command(c,'status')).body;
+  assert.equal(JSON.stringify(status).includes(c.botToken),false);
+  assert.equal(JSON.stringify(botStatus).includes(c.botToken),false);
+  assert.equal((await api(botRoute(c),c.botToken,{name:'owner_secret',args:{}})).body.error,'invalid-command');
+  client.disconnect();
+  await until(async()=>!(await api(ownerRoute(c)+'/status',c.ownerToken)).body.hostOnline);
+  assert.equal((await api(route,c.ownerToken,{})).body.error,'host-offline');
+});
+
+test('relay refuses a saved token that does not match its provisioned bot hash',async t=>{
+  const c=await provision();const config={...c,relayUrl:origin};
+  const client=new RelayClient({getConfig:()=>config,onCommand:async()=>({ok:false}),onOwnerState:async()=>({ok:false}),onOwnerSecret:()=>randomToken()});
+  t.after(()=>client.disconnect());
+  const ready=new Promise(resolve=>client.on('status',s=>{if(s.authenticated)resolve();}));client.connect();await ready;
+  const result=await api(ownerRoute(c)+'/bot-token',c.ownerToken,{});
+  assert.equal(result.status,409);assert.equal(result.body.error,'bot-token-mismatch');
+  assert.equal(JSON.stringify(result).includes(c.botToken),false);
+});
+
+test('owner can rotate a lost bot token; old bot credential is revoked and fresh token remains revealable',async t=>{
+  const c=await provision();let saved='';const config={...c,relayUrl:origin};
+  const client=new RelayClient({getConfig:()=>config,onCommand:async()=>({ok:false}),onOwnerState:async()=>({ok:false}),
+    onOwnerSecret:()=>saved||'',onRotateOwnerSecret:()=>{saved=randomToken();return saved;}});
+  t.after(()=>client.disconnect());
+  const ready=new Promise(resolve=>client.on('status',s=>{if(s.authenticated)resolve();}));client.connect();await ready;
+  const route=ownerRoute(c)+'/rotate-bot-token';
+  assert.equal((await api(route,c.botToken,{})).status,401);
+  assert.equal((await api(route,c.hostToken,{})).status,401);
+  assert.equal((await api(ownerRoute(c)+'/bot-token',c.ownerToken,{})).body.error,'bot-token-unavailable');
+  const rotated=await api(route,c.ownerToken,{});
+  assert.equal(rotated.status,200);assert.equal(rotated.body.botToken,saved);
+  assert.notEqual(saved,c.botToken);
+  assert.equal((await command(c,'status')).status,401);
+  assert.equal((await api(botRoute(c),saved,{name:'status',args:{}},{'x-bot-id':'bot-a'})).status,200);
+  assert.equal((await api(ownerRoute(c)+'/bot-token',c.ownerToken,{})).body.botToken,saved);
+  assert.equal(JSON.stringify((await api(ownerRoute(c)+'/status',c.ownerToken)).body).includes(saved),false);
+});
+
+test('owner secret request is a distinct host message, cannot be satisfied by command_result',async t=>{
+  const c=await provision();const socket=await connected(c,t);
+  const pending=api(ownerRoute(c)+'/bot-token',c.ownerToken,{});
+  const request=await socket.next('owner_secret');
+  socket.send(JSON.stringify({type:'command_result',commandId:request.requestId,ok:true,result:{botToken:c.botToken}}));
+  socket.send(JSON.stringify({type:'owner_secret_result',requestId:request.requestId,ok:true,botToken:c.botToken}));
+  assert.equal((await pending).body.botToken,c.botToken);
+});
+
 test('owner recovery crosses the real relay, stops access, approves a separate-PID dialog and preserves STOP', async t => {
   const c=await provision();
   const base={handle:'1001',processId:123,processStartedAt:'111',processName:'msedge',title:'Extensions',integrity:'medium',desktop:'default',automationChecked:true,passwordFocused:false,passwordPresent:false,geometry:{x:0,y:0,width:900,height:700}};
@@ -118,7 +180,7 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
   assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
   const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
-  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.2.0');
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.3.0');
   assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
   const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
   assert.equal((await command(c,'screenshot')).status,200);

@@ -4,8 +4,8 @@ import WebSocket from 'ws';
 import { relayOrigin } from './config-store.mjs';
 
 export class RelayClient extends EventEmitter {
-  constructor({getConfig,onCommand,onOwnerState,onOwnerTarget}) {
-    super();Object.assign(this,{getConfig,onCommand,onOwnerState,onOwnerTarget});
+  constructor({getConfig,onCommand,onOwnerState,onOwnerTarget,onOwnerSecret,onRotateOwnerSecret}) {
+    super();Object.assign(this,{getConfig,onCommand,onOwnerState,onOwnerTarget,onOwnerSecret,onRotateOwnerSecret});
     this.socket=null;this.timer=null;this.heartbeat=null;this.closed=true;this.retryMs=1000;
   }
   connect(){this.closed=false;this.open();}
@@ -41,6 +41,20 @@ export class RelayClient extends EventEmitter {
       const response=Number.isFinite(m.expiresAt)&&m.expiresAt>Date.now()&&this.onOwnerTarget?
         await this.onOwnerTarget(m.args):{ok:false,error:'target-recovery-unavailable'};
       if(socket===this.socket&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'command_result',commandId:m.commandId,...response}));
+    }
+    else if(m.type==='owner_secret'){
+      let token,error;
+      try {token=this.onOwnerSecret?.();if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43,128}$/.test(token))throw new Error('bot-token-unavailable');}
+      catch {error='bot-token-unavailable';}
+      if(socket===this.socket&&socket.readyState===WebSocket.OPEN)
+        socket.send(JSON.stringify({type:'owner_secret_result',requestId:m.requestId,ok:!error,...(error?{error}:{botToken:token})}));
+    }
+    else if(m.type==='owner_secret_rotate'){
+      let token,error;
+      try {token=this.onRotateOwnerSecret?.();if(typeof token!=='string'||!/^[A-Za-z0-9_-]{43,128}$/.test(token))throw new Error('bot-token-rotation-failed');}
+      catch {error='bot-token-rotation-failed';}
+      if(socket===this.socket&&socket.readyState===WebSocket.OPEN)
+        socket.send(JSON.stringify({type:'owner_secret_rotate_result',requestId:m.requestId,ok:!error,...(error?{error}:{botToken:token})}));
     }
     else if(m.type==='command'){const response=await this.onCommand(m);
       if(socket===this.socket&&socket.readyState===WebSocket.OPEN){
