@@ -12,6 +12,8 @@ export function redactClipboard(text) {
 export class DesktopExecutor {
   constructor({ recorder }) { this.recorder = recorder; }
   foreground(options) { return native.foregroundWindow(options); }
+  inspect(targetWindow, options) { return native.inspect({ expectedWindow: targetWindow }, options); }
+  listWindows(options) { return native.listWindows(options); }
   focus(targetWindow, options) { return native.focus({ expectedWindow: targetWindow }, options); }
   async run(name, args, options) {
     switch (name) {

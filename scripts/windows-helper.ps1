@@ -109,10 +109,11 @@ public static class BotDeskNative {
   public static Dictionary<string,object> Describe(IntPtr hwnd,bool automation) {
     uint pid; GetWindowThreadProcessId(hwnd,out pid);
     var title=new StringBuilder(1024); GetWindowText(hwnd,title,title.Capacity);
-    string name=""; try { name=Process.GetProcessById((int)pid).ProcessName; } catch { }
+    string name="",started=""; try { using(var process=Process.GetProcessById((int)pid)) { name=process.ProcessName; started=process.StartTime.ToUniversalTime().Ticks.ToString(); } } catch { }
     RECT rect; if(!GetWindowRect(hwnd,out rect)) rect=new RECT();
     var result=new Dictionary<string,object> {
       {"handle",hwnd.ToInt64().ToString()},{"processId",(int)pid},{"processName",name},{"title",title.ToString()},
+      {"processStartedAt",started},
       {"integrity",Integrity(pid)},{"desktop",Desktop()},{"automationChecked",false},{"passwordFocused",true},{"passwordPresent",true},
       {"geometry",new Dictionary<string,object>{{"x",rect.Left},{"y",rect.Top},{"width",rect.Right-rect.Left},{"height",rect.Bottom-rect.Top}}}
     };
@@ -130,6 +131,7 @@ public static class BotDeskNative {
     return result;
   }
   static IntPtr ParseHandle(string value) { long parsed; if(!Int64.TryParse(value,out parsed) || parsed<=0) throw Block("invalid-target"); return new IntPtr(parsed); }
+  public static string ExpectedProcessStart = null;
   static void BasicCheck(IntPtr hwnd,uint expectedPid,bool foreground) {
     if(Desktop()!="default") throw Block("desktop-blocked");
     string self=Integrity((uint)Process.GetCurrentProcess().Id);
@@ -138,6 +140,7 @@ public static class BotDeskNative {
     if(pid==0 || pid!=expectedPid || !IsWindowVisible(hwnd) || IsIconic(hwnd)) throw Block("target-changed");
     if(foreground && GetForegroundWindow()!=hwnd) throw Block("target-not-foreground");
     var process=Process.GetProcessById((int)pid);
+    if(ExpectedProcessStart!=null && process.StartTime.ToUniversalTime().Ticks.ToString()!=ExpectedProcessStart) throw Block("target-changed");
     if(process.SessionId!=Process.GetCurrentProcess().SessionId || !Apps.Contains(process.ProcessName)) throw Block("app-blocked");
     string integrity=Integrity(pid);
     if(integrity!="medium" && integrity!="low") throw Block("target-integrity-blocked");
@@ -159,6 +162,7 @@ public static class BotDeskNative {
   }
   static void Emit(INPUT[] items) { if(SendInput((uint)items.Length,items,Marshal.SizeOf(typeof(INPUT)))!=(uint)items.Length) throw Block("input-incomplete"); }
   public static Dictionary<string,object> Foreground() { return Describe(GetForegroundWindow(),true); }
+  public static Dictionary<string,object> Inspect(string handle,uint pid) { return Describe(Check(handle,pid,false),true); }
   public static List<Dictionary<string,object>> Windows() {
     var windows=new List<Dictionary<string,object>>();
     if(Desktop()!="default") return windows;
@@ -517,7 +521,9 @@ try {
     if ($null -eq $inputArgs.expectedWindow -or [string]$inputArgs.expectedWindow.handle -notmatch '^[1-9][0-9]{0,18}$' -or $inputArgs.expectedWindow.processId -isnot [int] -or $inputArgs.expectedWindow.processId -le 0) { throw 'invalid-target' }
     $targetHandle = [string]$inputArgs.expectedWindow.handle
     $targetPid = [uint32]$inputArgs.expectedWindow.processId
+    if ($inputArgs.expectedWindow.processStartedAt) { [BotDeskNative]::ExpectedProcessStart = [string]$inputArgs.expectedWindow.processStartedAt }
     switch ($action) {
+      'inspect' { $result = @{ ok = $true; window = [BotDeskNative]::Inspect($targetHandle,$targetPid) } }
       'focus' { [BotDeskNative]::Focus($targetHandle,$targetPid); $result = @{ ok = $true } }
       'capture' { $result = [BotDeskNative]::Capture($targetHandle,$targetPid) }
       'snapshot' { $result = [BotDeskNative]::Snapshot($targetHandle,$targetPid) }

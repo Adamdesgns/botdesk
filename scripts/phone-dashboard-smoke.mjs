@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,6 +16,8 @@ const token = randomBytes(32).toString('base64url');
 const host = 'phone-smoke-only';
 const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=';
 const requests = [], fixtureErrors = [];
+let delayList=false, releaseList, delayCapture=false, releaseCapture;
+const candidates=[{candidateId:randomUUID(),processName:'msedge',processId:123,handle:'1001',title:'Extensions'},{candidateId:randomUUID(),processName:'msedge',processId:456,handle:'2002',title:'Select the extension directory. <img src=x onerror=alert(1)>'}];
 let state = { mode: 'off', hostOnline: true, activeBot: null, schedule: null, schedulePending: false, expiresAt: null, liveEndsAt: null };
 const server = createServer(async (request, response) => {
   try {
@@ -35,7 +37,7 @@ const server = createServer(async (request, response) => {
     else if (route === 'state' && request.method === 'POST') {
       assert.ok(['armed', 'paused', 'off'].includes(body.mode));
       assert.equal(body.minutes, 480);
-      const expiresAt = body.mode === 'armed' ? Date.now() + 480 * 60_000 : null;
+      const expiresAt = body.mode === 'armed' ? Math.min(Date.now() + 480 * 60_000, state.target?.temporaryUntil||Infinity) : null;
       state = { ...state, mode: body.mode, schedule: null, schedulePending: false, expiresAt, liveEndsAt: expiresAt };
       result = { ...state, confirmed: true };
     } else if (route === 'schedule' && request.method === 'POST') {
@@ -43,8 +45,12 @@ const server = createServer(async (request, response) => {
       assert.equal(body.endsAt - body.startsAt, 12 * 3600_000);
       state = { ...state, mode: 'off', schedule: body, schedulePending: true, expiresAt: null, liveEndsAt: null };
       result = state;
+    } else if (route === 'target' && request.method === 'POST') {
+      if(body.action==='list'){state={...state,mode:'off',expiresAt:null,liveEndsAt:null,schedule:null,schedulePending:false};if(delayList)await new Promise(resolve=>{releaseList=resolve;});result={ok:true,result:{windows:candidates,expiresAt:Date.now()+60000}};}
+      else {assert.equal(body.action,'approve');assert.equal(body.candidateId,candidates[1].candidateId);assert.equal(body.temporary,true);state={...state,target:{state:'ready',window:candidates[1],temporaryUntil:Date.now()+300000}};result={ok:true,result:{mode:'off'}};}
     } else if (route === 'command' && request.method === 'POST') {
       assert.equal(body.name, 'screenshot'); assert.deepEqual(body.args, {});
+      if(delayCapture)await new Promise(resolve=>{releaseCapture=resolve;});
       result = { ok: true, result: { snapshotId: 'synthetic-phone-preview', image: { mimeType: 'image/png', data: pixel, width: 1, height: 1 }, window: { title: 'Synthetic preview only' } } };
     } else throw new Error('Unexpected fixture route');
     response.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }); response.end(JSON.stringify(result));
@@ -107,10 +113,44 @@ try {
   await page.locator('[data-action="off"]').click();
   await page.waitForFunction(() => document.querySelector('#mode').textContent === 'OFF');
   assert.equal(state.schedule, null); assert.equal(state.schedulePending, false);
+  await page.setViewportSize({width:320,height:844});
+  await page.locator('#choose-target').click();
+  await page.locator('#target-review').waitFor({state:'visible'});
+  await page.locator('#target-choice').selectOption(candidates[1].candidateId);
+  assert.match(await page.locator('#target-confirm').textContent(),/process 456, window 2002/);
+  assert.equal(await page.locator('#temporary-target').isChecked(),true);
+  assert.equal(await page.locator('#target-review img').count(),0,'Window titles must be text, never HTML');
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=320),'Review must fit 320px');
+  await page.screenshot({path:path.resolve('evidence/phone-window-review-320.png'),fullPage:true});
+  await page.locator('#approve-target').click();
+  await page.waitForFunction(()=>document.querySelector('#target-detail').textContent.includes('temporary approval'));
+  assert.equal(await page.locator('#mode').textContent(),'OFF');
+  assert.equal(await page.locator('#save-schedule').isDisabled(),true);
+  assert.match(await page.locator('[data-action="armed"]').textContent(),/UP TO 5 MIN/);
+  await page.locator('[data-action="armed"]').click();
+  await page.waitForFunction(()=>document.querySelector('#mode').textContent==='LIVE');
+  assert.equal(state.expiresAt,state.target.temporaryUntil);
+  delayCapture=true;
+  await page.locator('#preview').click();
+  await page.waitForTimeout(50);
+  assert.equal(typeof releaseCapture,'function');
+  await page.locator('[data-action="off"]').click();
+  await page.waitForFunction(()=>document.querySelector('#mode').textContent==='OFF');
+  releaseCapture();
+  await page.waitForFunction(()=>!previewBusy);
+  assert.equal(await page.locator('#screen').getAttribute('src'),null,'Late snapshot after STOP must stay hidden');
+  delayList=true;
+  await page.locator('#choose-target').click();
+  await page.waitForTimeout(50);
+  assert.equal(typeof releaseList,'function');
+  await page.locator('[data-action="off"]').click();
+  releaseList();
+  await page.waitForFunction(()=>!targetBusy);
+  assert.equal(await page.locator('#target-review').isVisible(),false,'Late window list after STOP must stay hidden');
   const isolated = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => { const preferences = window.webContents.getLastWebPreferences(); return !window.isVisible() && preferences.sandbox && preferences.contextIsolation && !preferences.nodeIntegration; }));
   assert.equal(isolated, true);
   assert.deepEqual(pageErrors, []); assert.deepEqual(fixtureErrors, []);
-  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window'], screenshot: 'evidence/phone-schedule.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
+  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window', '320px-window-review', 'explicit-dialog-approval', 'temporary-five-minute-cap', 'untrusted-title-as-text', 'late-snapshot-after-stop-hidden', 'late-review-after-stop-hidden'], screenshot: 'evidence/phone-schedule.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
   await fs.writeFile('evidence/phone-schedule-smoke.json', JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result, null, 2));
 } finally {

@@ -86,6 +86,7 @@ export class BotDeskSession extends DurableObject<Env> {
   private scheduleRevision = 0;
   private scheduleError: string | null = null;
   private ownerTransition: number | null = null;
+  private target: RecordValue | null = null;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
@@ -116,7 +117,7 @@ export class BotDeskSession extends DurableObject<Env> {
     if (request.headers.get('upgrade')?.toLowerCase() !== 'websocket') return json({ error: 'websocket-required' }, 426);
     if (this.host && this.host.readyState === WebSocket.OPEN) return json({ error: 'host-already-connected' }, 409);
     const [client, server] = Object.values(new WebSocketPair());
-    server.accept(); this.host = server; this.forceOff('host-connected');
+    server.accept(); this.host = server; this.target = null; this.forceOff('host-connected');
     server.addEventListener('message', (event) => this.hostMessage(server, event.data));
     server.addEventListener('close', () => this.disconnectHost(server, 'host-disconnected'));
     server.addEventListener('error', () => this.disconnectHost(server, 'host-error'));
@@ -139,7 +140,8 @@ export class BotDeskSession extends DurableObject<Env> {
     const generation = this.generation;
     this.ownerTransition = generation;
     if (mode !== 'armed') this.sendSafetyOff(`owner-${mode}`);
-    const expiresAt = mode === 'armed' ? Date.now() + clampMinutes(body.minutes) * 60_000 : null;
+    const targetLimit = typeof this.target?.temporaryUntil === 'number' ? this.target.temporaryUntil : Infinity;
+    const expiresAt = mode === 'armed' ? Math.min(Date.now() + clampMinutes(body.minutes) * 60_000, targetLimit) : null;
     const saved = expiresAt ? { id: crypto.randomUUID(), startsAt: Date.now(), endsAt: expiresAt } : null;
     try {
       await this.replaceSchedule(saved);
@@ -154,6 +156,7 @@ export class BotDeskSession extends DurableObject<Env> {
   }
   async ownerSchedule(token: string, body: RecordValue, requestId: string): Promise<Response> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
+    if (this.target?.temporaryUntil) return json({ error: 'temporary-target-no-schedule' }, 409);
     const { startsAt, endsAt } = body;
     const now = Date.now();
     if (!Number.isSafeInteger(startsAt) || !Number.isSafeInteger(endsAt) ||
@@ -214,7 +217,7 @@ export class BotDeskSession extends DurableObject<Env> {
     const result = await response.json<{ error?: string }>();
     if (this.schedule?.id !== saved.id) return;
     this.scheduleError = result.error || 'scheduled-arm-rejected';
-    if (['local-stop-latched', 'remote-arm-disabled', 'local-stop'].includes(this.scheduleError)) {
+    if (['local-stop-latched', 'remote-arm-disabled', 'local-stop', 'select-a-window-first', 'target-reselect-required', 'temporary-target-expired', 'temporary-target-limit', 'focus-refused', 'target-changed'].includes(this.scheduleError)) {
       const error = this.scheduleError; await this.replaceSchedule(null); this.scheduleError = error; return;
     }
     await this.ctx.storage.setAlarm(Math.min(Date.now() + 30_000, saved.endsAt));
@@ -243,6 +246,28 @@ export class BotDeskSession extends DurableObject<Env> {
     const commandId = crypto.randomUUID();
     return this.sendAndWait('command', { type: 'command', commandId, name, args: body.args || {}, botId: role === 'owner' ? 'owner-preview' : botId, ownerPreview: role === 'owner', expiresAt: Math.min(Date.now() + COMMAND_TIMEOUT, this.state.expiresAt || Infinity), controlGeneration: this.generation }, commandId);
   }
+  async ownerTarget(token: string, body: RecordValue, requestId: string): Promise<Response> {
+    if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
+    if (!['list', 'approve'].includes(String(body.action)) ||
+      (body.action === 'approve' && (typeof body.candidateId !== 'string' || !REQUEST_ID.test(body.candidateId) || typeof body.temporary !== 'boolean')))
+      return json({ error: 'invalid-target-action' }, 400);
+    const replay = this.reserveId(requestId); if (replay) return replay;
+    if (!this.host) return json({ error: 'host-offline' }, 503);
+    if (body.action !== 'list' && (this.pending || this.ownerTransition !== null)) return json({ error: 'host-busy' }, 409);
+    if (body.action === 'list') {
+      // Stop first, clear any schedule, then enumerate metadata only. Approval
+      // never arms access; the owner's next GO LIVE is a separate decision.
+      this.forceOff('owner-selecting-target'); this.sendSafetyOff('owner-selecting-target');
+      const generation = this.generation; this.ownerTransition = generation;
+      try { await this.replaceSchedule(null); }
+      finally { if (this.ownerTransition === generation) this.ownerTransition = null; }
+      if (this.generation !== generation) return json({ error: 'state-superseded' }, 409);
+    } else if (this.state.mode !== 'off' || this.schedule) return json({ error: 'stop-before-selecting' }, 409);
+    const commandId = crypto.randomUUID();
+    return this.sendAndWait('command', { type: 'owner_target', commandId,
+      args: { action: body.action, candidateId: body.candidateId, temporary: body.temporary },
+      expiresAt: Date.now() + COMMAND_TIMEOUT }, commandId);
+  }
   private async authorized(token: string, role: 'owner' | 'bot' | 'host'): Promise<boolean> {
     if (!TOKEN.test(token) || !this.secrets) return false;
     return equalHash(await hashToken(token), this.secrets[`${role}Hash`]);
@@ -261,7 +286,8 @@ export class BotDeskSession extends DurableObject<Env> {
     return { ...this.state, hostOnline: this.host !== null, controlGeneration: this.generation, pending: this.pending?.kind || null,
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
-      liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError };
+      liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
+      relayContractVersion: '1.2.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);
@@ -309,6 +335,17 @@ export class BotDeskSession extends DurableObject<Env> {
     let message: unknown;
     try { message = JSON.parse(raw); } catch { return this.disconnectHost(socket, 'invalid-host-json'); }
     if (!isRecord(message)) return this.disconnectHost(socket, 'invalid-host-message');
+    if (message.type === 'target_status') {
+      const t = message.target;
+      if (!isRecord(t) || !['missing', 'ready', 'reselect-required'].includes(String(t.state))) return;
+      const w = isRecord(t.window) ? t.window : null;
+      this.target = { state: t.state, checkedAt: typeof t.checkedAt === 'number' ? t.checkedAt : null,
+        reason: typeof t.reason === 'string' ? t.reason.slice(0, 160) : null,
+        temporaryUntil: typeof t.temporaryUntil === 'number' ? t.temporaryUntil : null,
+        window: w ? { title: String(w.title || '').slice(0, 1024), processName: String(w.processName || '').slice(0, 80),
+          processId: w.processId, handle: String(w.handle || '').slice(0, 20) } : null };
+      return;
+    }
     if (message.type === 'heartbeat') { this.heartbeat(); socket.send(JSON.stringify({ type: 'heartbeat_ack', controlGeneration: this.generation })); return; }
     if (message.type === 'local_state' && (message.mode === 'off' || message.mode === 'paused')) {
       if (this.pending?.kind === 'state' && this.pending.generation === message.controlGeneration && this.pending.mode === message.mode) return;
@@ -356,7 +393,7 @@ export default {
       }
       const host = /^\/api\/host\/([a-z0-9][a-z0-9-]{0,63})\/socket$/.exec(url.pathname);
       if (host && request.method === 'GET') return sessionStub(env, host[1]).fetch(request);
-      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule)$/.exec(url.pathname);
+      const owner = /^\/api\/owner\/([a-z0-9][a-z0-9-]{0,63})\/(status|state|command|schedule|target)$/.exec(url.pathname);
       const bot = /^\/api\/bot\/([a-z0-9][a-z0-9-]{0,63})\/command$/.exec(url.pathname);
       if (owner || bot) {
         const token = bearer(request); if (!token) return json({ error: 'unauthorized' }, 401);
@@ -366,6 +403,7 @@ export default {
         const body = await readJson(request); const requestId = request.headers.get('x-request-id') || '';
         if (owner?.[2] === 'state') return stub.ownerState(token, body, requestId);
         if (owner?.[2] === 'schedule') return stub.ownerSchedule(token, body, requestId);
+        if (owner?.[2] === 'target') return stub.ownerTarget(token, body, requestId);
         return stub.command(token, owner ? 'owner' : 'bot', body, request.headers.get('x-bot-id') || '', requestId);
       }
       return json({ error: 'not-found' }, 404);

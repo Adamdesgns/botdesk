@@ -4,8 +4,8 @@ import WebSocket from 'ws';
 import { relayOrigin } from './config-store.mjs';
 
 export class RelayClient extends EventEmitter {
-  constructor({getConfig,onCommand,onOwnerState}) {
-    super();Object.assign(this,{getConfig,onCommand,onOwnerState});
+  constructor({getConfig,onCommand,onOwnerState,onOwnerTarget}) {
+    super();Object.assign(this,{getConfig,onCommand,onOwnerState,onOwnerTarget});
     this.socket=null;this.timer=null;this.heartbeat=null;this.closed=true;this.retryMs=1000;
   }
   connect(){this.closed=false;this.open();}
@@ -37,6 +37,11 @@ export class RelayClient extends EventEmitter {
       this.emit('status',{connected:true,authenticated:true});
     }else if(m.type==='heartbeat_ack')this.lastAck=Date.now();
     else if(m.type==='owner_state')await this.onOwnerState(m);
+    else if(m.type==='owner_target'){
+      const response=Number.isFinite(m.expiresAt)&&m.expiresAt>Date.now()&&this.onOwnerTarget?
+        await this.onOwnerTarget(m.args):{ok:false,error:'target-recovery-unavailable'};
+      if(socket===this.socket&&socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify({type:'command_result',commandId:m.commandId,...response}));
+    }
     else if(m.type==='command'){const response=await this.onCommand(m);
       if(socket===this.socket&&socket.readyState===WebSocket.OPEN){
         const payload=JSON.stringify({type:'command_result',commandId:m.commandId,...response});

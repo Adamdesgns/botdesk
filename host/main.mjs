@@ -47,13 +47,13 @@ function handle(name,fn,{allowOverlay=false}={}){
   });
 }
 function installIpc(){
-  handle('get-state',()=>({status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()}));
+  handle('get-state',async()=>{if(!controller.operation)await controller.revalidateTarget();return {status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()};});
   handle('windows',async()=>{const result=await listWindows();
     choices=(result.windows||[]).filter(w=>isAllowedWindow(w,configStore.load().allowedApps));
     return {ok:result.ok,windows:choices,error:result.error};});
-  handle('select-window',handle=>{
+  handle('select-window',async handle=>{
     const target=choices.find(w=>w.handle===handle&&isAllowedWindow(w,configStore.load().allowedApps));if(!target)throw new Error('Refresh and choose an available window.');
-    controller.selectTarget(target);return {ok:true,status:controller.getStatus()};
+    controller.selectTarget(target);const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);return {ok:true,status:controller.getStatus()};
   });
   handle('set-mode',async input=>{
     if(input?.mode==='off')return {ok:true,status:controller.emergencyStop('local-button')};
@@ -66,6 +66,7 @@ function installIpc(){
     if(!controller.targetWindow)throw new Error('Choose a window first.');
     if(controller.stopLatched)throw new Error('Unlock the local stop first.');
     const epoch=controller.epoch;
+    const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);
     const focused=await focus({expectedWindow:controller.targetWindow});
     if(!focused.ok)throw new Error(focused.error);
     if(epoch!==controller.epoch)throw new Error('Arming was cancelled.');
@@ -112,7 +113,7 @@ app.whenReady().then(()=>{
   recorder=new RecordingService({directory:path.join(app.getPath('userData'),'captures'),send});
   const executor=new DesktopExecutor({recorder});
   controller=new HostController({configStore,auditLog:new AuditLog(path.join(app.getPath('userData'),'logs')),executor});
-  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m)});
+  const relay=new RelayClient({getConfig:()=>configStore.load(),onCommand:m=>controller.runCommand(m),onOwnerState:m=>controller.applyOwnerState(m),onOwnerTarget:m=>controller.ownerTarget(m)});
   controller.attachRelay(relay);
   mainWindow=lockedWindow({width:980,height:830,minWidth:760,minHeight:650,backgroundColor:'#0d0d0d',title:'BotDesk Host'});
   mainWindow.on('close',event=>{if(!quitting){event.preventDefault();mainWindow.hide();}});
@@ -141,6 +142,9 @@ app.whenReady().then(()=>{
   powerMonitor.on('lock-screen',()=>controller.emergencyStop('windows-locked'));
   powerMonitor.on('suspend',()=>controller.emergencyStop('windows-suspended'));
   relay.connect();
+  let checkingTarget=false;
+  const targetTimer=setInterval(async()=>{if(checkingTarget||controller.operation||controller.ownerOperation||quitting)return;checkingTarget=true;try{await controller.revalidateTarget();}finally{checkingTarget=false;}},5000);
+  targetTimer.unref();
   if(process.argv.includes('--background'))mainWindow.hide();
 }).catch(error=>{console.error('BotDesk startup failed:',error.message);quitting=true;app.quit();});
 app.on('before-quit',event=>{

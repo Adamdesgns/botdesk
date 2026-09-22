@@ -6,7 +6,7 @@ const source=fs.readFileSync(new URL('../relay/src/dashboard.ts',import.meta.url
 function render(state){
   const nodes=new Map();
   const context=vm.createContext({Date,Intl,state,document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{textContent:'',value:'',disabled:false});return nodes.get(selector);}},clearScreen(){}});
-  vm.runInContext('let current=null,syncedSchedule=false;const hasToken=true,controlBusy=false,previewBusy=false,scheduleBusy=false;'+source.match(/^function (?:alertMessage|localDateValue|countdown|render)\(.*$/gm).join('\n')+';render(state);',context);
+  vm.runInContext('let current=null,syncedSchedule=false;const hasToken=true,controlBusy=false,previewBusy=false,scheduleBusy=false,targetBusy=false;'+source.match(/^function (?:alertMessage|localDateValue|countdown|render|renderTarget)\(.*$/gm).join('\n')+';render(state);',context);
   return nodes;
 }
 test('online failed activation is BLOCKED and never claims waiting for a connection',()=>{

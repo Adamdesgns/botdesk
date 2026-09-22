@@ -1,5 +1,9 @@
 # Local verification
 
+## 2026-09-22 recovery update
+
+The owner window-recovery patch is local only. Its 136 tests, Worker type checks and 18-tool MCP smoke pass. The synthetic phone flow passes at 390px and 320px, including explicit temporary-dialog approval and late-response suppression after STOP. Native helper compilation passes; real Edge/phone recovery remains unverified. See [the repair record](WINDOW-RECOVERY-2026-09-22.md). The sections below describe earlier verification snapshots and do not establish the currently installed or deployed version.
+
 This is a development baseline. The relay has not been deployed or paired, and remote phone access is not live. No real-phone or external-bot pilot is claimed.
 
 ## Verified on Windows

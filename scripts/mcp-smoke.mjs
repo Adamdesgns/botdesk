@@ -53,7 +53,7 @@ export async function runMcpSmoke() {
       assert.ok(tools.tools.some((tool) => tool.name === `botdesk_${suffix}`));
     }
     const capabilities = await client.callTool({ name: 'botdesk_capabilities', arguments: {} });
-    assert.equal(JSON.parse(capabilities.content[0].text).contractVersion, '1.1.0');
+    assert.equal(JSON.parse(capabilities.content[0].text).contractVersion, '1.2.0');
     const status = await client.callTool({ name: 'botdesk_status', arguments: {} });
     assert.equal(JSON.parse(status.content[0].text).mode, 'off');
     const screenshot = await client.callTool({ name: 'botdesk_screenshot', arguments: {} });

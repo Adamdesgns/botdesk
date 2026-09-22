@@ -95,6 +95,63 @@ const botRoute = c => '/api/bot/' + c.hostId + '/command';
 const ownerRoute = c => '/api/owner/' + c.hostId;
 const command = (c, name, botId = 'bot-a', extras = {}) => api(botRoute(c), c.botToken, { name, args: {} }, { 'x-bot-id': botId, ...extras });
 
+test('owner recovery crosses the real relay, stops access, approves a separate-PID dialog and preserves STOP', async t => {
+  const c=await provision();
+  const base={handle:'1001',processId:123,processStartedAt:'111',processName:'msedge',title:'Extensions',integrity:'medium',desktop:'default',automationChecked:true,passwordFocused:false,passwordPresent:false,geometry:{x:0,y:0,width:900,height:700}};
+  const dialog={...base,handle:'2002',processId:456,processStartedAt:'222',title:'Select the extension directory.'};
+  const windows=[base,dialog];let foreground=base;
+  const config={...c,relayUrl:origin,allowRemoteArm:true,allowedApps:['msedge']};
+  const host=new HostController({configStore:{load:()=>config},auditLog:{write:()=>{}},executor:{
+    inspect:async w=>({ok:true,window:structuredClone(windows.find(x=>x.handle===w.handle))}),
+    listWindows:async()=>({ok:true,windows}),foreground:async()=>foreground,
+    focus:async w=>{foreground=w;return {ok:true};},run:async()=>({ok:true,window:foreground}),recordStop:async()=>({ok:true})}});
+  const client=new RelayClient({getConfig:()=>config,onCommand:m=>host.runCommand(m),onOwnerState:m=>host.applyOwnerState(m),onOwnerTarget:m=>host.ownerTarget(m)});
+  host.attachRelay(client);host.selectTarget(base);t.after(()=>{host.emergencyStop();client.disconnect();});
+  const ready=new Promise(resolve=>client.on('status',s=>{if(s.authenticated)resolve();}));client.connect();await ready;
+  await client.ownerState('armed');
+  assert.equal((await api(ownerRoute(c)+'/target',c.botToken,{action:'list'})).status,401);
+  assert.equal((await command(c,'owner_target')).body.error,'invalid-command');
+  const listed=await api(ownerRoute(c)+'/target',c.ownerToken,{action:'list'});assert.equal(listed.status,200,JSON.stringify(listed));
+  assert.equal(host.mode,'off');assert.equal((await api(ownerRoute(c)+'/status',c.ownerToken)).body.schedule,null);
+  assert.equal((await command(c,'screenshot')).body.error,'not-armed');
+  const candidateId=listed.body.result.windows.find(w=>w.processId===456).candidateId;
+  assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
+  assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
+  const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.2.0');
+  assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
+  const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
+  assert.equal((await command(c,'screenshot')).status,200);
+  assert.equal((await command(c,'focus')).status,200);
+  assert.equal((await api(botRoute(c),c.botToken,{name:'clipboard_write',args:{text:'fixture-path'}},{'x-bot-id':'bot-a'})).status,200);
+  await client.ownerState('off');assert.equal(host.targetWindow,null);
+  assert.equal((await command(c,'screenshot')).body.error,'not-armed');
+});
+
+test('failed target activation cancels automatic schedule retries and keeps the reason',async t=>{
+  const c=await provision();const socket=await connected(c,t);
+  const pending=api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed'});
+  const message=await nextMode(socket,'armed');
+  socket.send(JSON.stringify({...message,type:'owner_state_result',ok:false,error:'target-reselect-required'}));
+  assert.equal((await pending).body.error,'target-reselect-required');
+  await until(async()=>!(await api(ownerRoute(c)+'/status',c.ownerToken)).body.schedule);
+  const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
+  assert.equal(status.mode,'off');assert.equal(status.scheduleError,'target-reselect-required');
+});
+
+test('STOP & CHOOSE preempts an in-flight bot command and ignores its late result',async t=>{
+  const c=await provision();const socket=await connected(c,t);await arm(c,socket);
+  const pending=command(c,'screenshot');const capture=await socket.next('command');
+  const review=api(ownerRoute(c)+'/target',c.ownerToken,{action:'list'});
+  assert.equal((await pending).body.error,'owner-selecting-target');
+  const off=await nextMode(socket,'off');assert.equal(off.mode,'off');
+  const request=await socket.next('owner_target');
+  socket.send(JSON.stringify({type:'command_result',commandId:capture.commandId,ok:true,result:{image:'late-private-frame'}}));
+  socket.send(JSON.stringify({type:'command_result',commandId:request.commandId,ok:true,result:{windows:[],expiresAt:Date.now()+60000}}));
+  assert.deepEqual((await review).body.result.windows,[]);
+  const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;assert.equal(status.mode,'off');assert.equal(status.schedule,null);
+});
+
 test('exact routes reject unauthenticated provisioning bypass and wrong credentials', async t => {
   const c = { hostId: 'new-' + randomUUID(), hostToken: randomToken(), ownerToken: randomToken(), botToken: randomToken() };
   assert.equal((await api('/api/provision', '', c)).status, 401);
@@ -267,13 +324,14 @@ test('Worker restart defaults off; explicit owner timer survives and resumes aft
 
 test('real host controller and relay client complete remote arm, snapshot, input, pause and local stop with simulated native calls', async t => {
   const c = await provision();
-  const target = { handle: '101', processId: 1001, processName: 'notepad', title: 'Test document', integrity: 'medium', desktop: 'default', automationChecked: true, passwordPresent: false, passwordFocused: false, geometry: { x: 0, y: 0, width: 1, height: 1 } };
+  const target = { handle: '101', processId: 1001, processStartedAt: '123456', processName: 'notepad', title: 'Test document', integrity: 'medium', desktop: 'default', automationChecked: true, passwordPresent: false, passwordFocused: false, geometry: { x: 0, y: 0, width: 1, height: 1 } };
   const configuration = { ...c, relayUrl: origin, allowRemoteArm: true, allowedApps: ['notepad'] };
   const executed = [];
   let blockInput = false;
   let inputStarted;
   let resolveInputStarted;
   const executor = {
+    inspect: async () => ({ ok: true, window: { ...target } }),
     foreground: async () => ({ ...target }),
     run: async (name, args, { signal }) => {
       executed.push(name);

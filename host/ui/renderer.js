@@ -162,7 +162,7 @@ function render(status) {
   byId('unlockButton').hidden = !latestStatus.stopLatched;
   byId('unlockButton').disabled = Boolean(latestStatus.inputSafetyFault);
   const target = latestStatus.targetWindow;
-  setText('selectedWindowName', target ? target.title + ' · ' + target.processName : 'No window selected');
+  setText('selectedWindowName', target ? target.title + ' · ' + target.processName : latestStatus.targetHealth?.state==='reselect-required' ? 'RESELECT REQUIRED' : 'No window selected');
   setText('targetDetail', target ? 'Selected: ' + target.title + ' (' + target.processName + '). BotDesk checks this window before every action.' : 'Choose an app window before arming. Only that window is captured and controlled.');
   setText('botActivity', mode === 'running' ? 'An approved bot is acting in the selected window.' : mode === 'armed' ? 'Waiting for an approved bot to request an action.' : 'Bot commands are not enabled.');
   renderReadiness();

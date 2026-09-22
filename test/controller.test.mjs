@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { HostController } from '../host/controller.mjs';
 
-const target = () => ({ handle: '1001', processId: 123, processName: 'msedge', title: 'Ordinary test page', integrity: 'medium', desktop: 'default', automationChecked: true, passwordFocused: false, passwordPresent: false, geometry: { x: -200, y: 20, width: 1000, height: 600 } });
+const target = () => ({ handle: '1001', processId: 123, processStartedAt: '123456', processName: 'msedge', title: 'Ordinary test page', integrity: 'medium', desktop: 'default', automationChecked: true, passwordFocused: false, passwordPresent: false, geometry: { x: -200, y: 20, width: 1000, height: 600 } });
 function deferred() { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; }
 
 function setup(t, config = {}) {
@@ -13,6 +13,7 @@ function setup(t, config = {}) {
   const events = [], calls = [];
   const settings = { allowRemoteArm: false, allowedApps: ['msedge'], ...config };
   const executor = {
+    inspect: async () => ({ ok: true, window: target() }),
     foreground: async () => structuredClone(foreground),
     focus: async (targetWindow, options) => { calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options }); return { ok: true, window: structuredClone(targetWindow) }; },
     run: async (name, args, options) => { calls.push({ name, args, options }); return { ok: true, window: structuredClone(foreground) }; },
@@ -145,6 +146,7 @@ test('emergency stop during awaited foreground check cancels before any input', 
   const s = setup(t); s.arm(); const pending = deferred(); let signal;
   s.executor.foreground = ({ signal: observed }) => { signal = observed; return pending.promise; };
   const result = s.controller.runCommand(s.command('screenshot'));
+  await new Promise(resolve => setImmediate(resolve));
   s.controller.emergencyStop();
   assert.equal(signal.aborted, true);
   pending.resolve(target());

@@ -2,7 +2,8 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { clampArmMinutes, CAPABILITY_FLAGS } from '../shared/protocol.mjs';
 import { CONTRACT_VERSION } from '../shared/errors.mjs';
-import { validateCommand } from './guard.mjs';
+import { validateCommand, isAllowedWindow } from './guard.mjs';
+import { TargetRecovery, sameTarget, TEMPORARY_TARGET_MS } from './target-recovery.mjs';
 const INPUT = new Set(['click', 'move', 'type', 'key', 'scroll', 'drag']);
 const READ = new Set(['screenshot', 'snapshot']);
 const fail = (error, message = error) => ({ok:false, error, message});
@@ -15,34 +16,76 @@ export class HostController extends EventEmitter {
     this.targetWindow=null; this.snapshots=new Map(); this.epoch=0; this.controlGeneration=null;
     this.operation=null; this.expiryTimer=null; this.seen=new Set(); this.stopLatched=false; this.inputSafetyFault=null;
     this.recording=false; this.recordAbort=null;
+    this.targetHealth={state:'missing',checkedAt:null,reason:null}; this.targetDeadline=null;
+    this.recovery=new TargetRecovery(this); this.ownerOperation=false;
   }
   attachRelay(relay) {
     this.relay=relay;
     relay.on('status', status => {
       this.relayStatus=status;
-      if (!status.authenticated && this.mode!=='off') this.setMode('off', {source:'relay-disconnected'});
+      if (!status.authenticated) this.setMode('off', {source:'relay-disconnected',notify:this.mode!=='off'});
+      if (!status.authenticated) this.recovery.clear();
+      if (status.authenticated) void this.revalidateTarget();
       this.emitStatus();
     });
   }
   getStatus() {
+    if (this.targetDeadline && this.clock()>=this.targetDeadline) this.invalidateTarget('temporary-target-expired');
     if (this.expiresAt && this.clock()>=this.expiresAt) this.setMode('off', {source:'expiry'});
     return {mode:this.mode, expiresAt:this.expiresAt, activeBot:this.activeBot, recording:this.recording,
       relay:this.relayStatus, stopLatched:this.stopLatched, inputSafetyFault:this.inputSafetyFault, targetWindow:this.targetWindow,
+      targetHealth:this.targetHealth, targetDeadline:this.targetDeadline,
       allowRemoteArm:Boolean(this.configStore.load().allowRemoteArm), hostId:this.configStore.load().hostId||null,
       contractVersion:CONTRACT_VERSION, capabilities:CAPABILITY_FLAGS,
       scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:false}};
   }
-  selectTarget(window) { this.setMode('off', {source:'target-changed'}); this.targetWindow=window; this.emitStatus(); }
+  selectTarget(window, {temporary=false,notify=true}={}) {
+    this.setMode('off', {source:'target-changed',notify}); this.targetWindow=window ? structuredClone(window) : null;
+    this.targetDeadline=window&&temporary?this.clock()+TEMPORARY_TARGET_MS:null;
+    this.targetHealth={state:window?'ready':'missing',checkedAt:window?this.clock():null,reason:null}; this.emitStatus();
+  }
+  invalidateTarget(reason) {
+    this.targetWindow=null; this.targetDeadline=null;
+    this.targetHealth={state:'reselect-required',checkedAt:this.clock(),reason};
+    this.setMode('off',{source:'target-invalid'});
+    return fail('target-reselect-required',reason);
+  }
+  async revalidateTarget(options) {
+    const target=this.targetWindow, epoch=this.epoch;
+    if(!target)return fail('target-required');
+    let current;
+    try { current=await this.executor.inspect(target,options); }
+    catch { current=fail('target-check-unavailable'); }
+    if(epoch!==this.epoch||options?.signal?.aborted)return fail('command-cancelled');
+    if(this.targetDeadline&&this.clock()>=this.targetDeadline)return this.invalidateTarget('temporary-target-expired');
+    if(!current.ok||!sameTarget(target,current.window)||!isAllowedWindow(current.window,this.configStore.load().allowedApps))
+      return this.invalidateTarget(current.error||'target-identity-or-safety-changed');
+    this.targetWindow=current.window; this.targetHealth={state:'ready',checkedAt:this.clock(),reason:null}; this.emitStatus();
+    return {ok:true,window:current.window};
+  }
+  async ownerTarget({action,...args}) {
+    if(this.ownerOperation)return fail('host-busy');
+    this.ownerOperation=true;
+    try { return {ok:true,result:action==='list'?await this.recovery.list():action==='approve'?await this.recovery.approve(args):(()=>{throw new Error('invalid-target-action');})()}; }
+    catch(error){return fail(error.message);}
+    finally{this.ownerOperation=false;}
+  }
   whenIdle() { return this.idlePromise || Promise.resolve(); }
   clearLocalStop() { if(this.inputSafetyFault)throw new Error(this.inputSafetyFault);this.stopLatched=false; this.emitStatus(); }
   setMode(mode, {minutes=480, expiresAt, source='local', generation, notify=true}={}) {
     if (!['off','armed','paused'].includes(mode)) throw new Error('invalid-mode');
     if(mode==='armed'&&this.inputSafetyFault)throw new Error(this.inputSafetyFault);
     if (mode==='armed' && (this.stopLatched||!this.targetWindow)) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
+    if(mode==='armed'&&this.targetDeadline&&this.clock()>=this.targetDeadline)throw new Error('temporary-target-expired');
+    this.recovery.clear();
+    if(mode!=='armed'&&this.targetDeadline){
+      this.targetWindow=null;this.targetDeadline=null;
+      this.targetHealth={state:'reselect-required',checkedAt:this.clock(),reason:'temporary-target-revoked'};
+    }
     this.epoch++; this.operation?.abort(); this.snapshots.clear();
     this.mode=mode; this.activeBot=null; this.leaseEndsAt=0; clearTimeout(this.expiryTimer);
     this.controlGeneration=generation??null;
-    this.expiresAt=mode==='armed'?Math.min(expiresAt||Infinity,this.clock()+clampArmMinutes(minutes)*60_000):null;
+    this.expiresAt=mode==='armed'?Math.min(expiresAt||Infinity,this.clock()+clampArmMinutes(minutes)*60_000,this.targetDeadline||Infinity):null;
     if (this.expiresAt) {
       this.expiryTimer=setTimeout(()=>this.setMode('off',{source:'expiry'}),Math.max(1,this.expiresAt-this.clock()));
       this.expiryTimer.unref?.();
@@ -61,6 +104,10 @@ export class HostController extends EventEmitter {
         if (!this.targetWindow) throw new Error('select-a-window-first');
         if (!Number.isFinite(expiresAt)||expiresAt<=this.clock()) throw new Error('expired-arm-request');
         const epoch=this.epoch;
+        if(this.ownerOperation)throw new Error('host-busy');
+        const valid=await this.revalidateTarget();
+        if(!valid.ok)throw new Error(valid.error);
+        if(this.targetDeadline&&expiresAt>this.targetDeadline)throw new Error('temporary-target-limit');
         if(this.executor.focus){
           const focused=await this.executor.focus(this.targetWindow);
           if(epoch!==this.epoch||this.stopLatched)throw new Error('local-stop-latched');
@@ -81,7 +128,7 @@ export class HostController extends EventEmitter {
     if(name==='stop_all') {this.setMode('off',{source:'bot-stop'});return {ok:true,result:this.getStatus()};}
     if(name==='record_stop') {if(this.operationName==='record_start')this.operation?.abort();return {ok:true,result:await this.stopRecording()};}
     if(typeof commandId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(commandId)||!Number.isFinite(expiresAt)||!Number.isInteger(controlGeneration))return fail('invalid-command-envelope');
-    if(this.operation) return fail('host-busy');
+    if(this.operation||this.ownerOperation) return fail('host-busy');
     if(commandId&&this.seen.has(commandId)) return fail('command-replayed');
     if(commandId) {this.seen.add(commandId);if(this.seen.size>2000)this.seen.delete(this.seen.values().next().value);}
     if(expiresAt!==undefined&&(!Number.isFinite(expiresAt)||expiresAt<=this.clock())) return fail('command-expired');
@@ -94,6 +141,7 @@ export class HostController extends EventEmitter {
     timer.unref?.();
     try {
       this.getStatus();
+      if(!['armed','running'].includes(this.mode))return fail('not-armed');
       if(name==='list_monitors') {
         const verdict=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),
           foreground:{},targetWindow:this.targetWindow||{handle:'0',processId:1},allowedApps:this.configStore.load().allowedApps});
@@ -102,6 +150,8 @@ export class HostController extends EventEmitter {
         if(!result.ok)return fail(result.error||'command-failed',result.message||result.error);
         return {ok:true,result};
       }
+      const valid=await this.revalidateTarget({signal:operation.signal});
+      if(!valid.ok)return valid;
       let foreground=await this.executor.foreground({signal:operation.signal});
       if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
       const canRestore=READ.has(name)||name==='list_windows';
@@ -194,5 +244,9 @@ export class HostController extends EventEmitter {
   async stopRecording(){this.recordAbort?.abort();this.recordAbort=null;this.recording=false;
     try{return await this.executor.recordStop();}catch{return {ok:false,error:'recording-stop-failed'};}}
   emergencyStop(source='local-hotkey'){this.stopLatched=true;return this.setMode('off',{source});}
-  emitStatus(){this.emit('status',this.getStatus());}
+  emitStatus(){const status=this.getStatus();this.emit('status',status);
+    const w=status.targetWindow;
+    this.relay?.send({type:'target_status',target:{...status.targetHealth,temporaryUntil:status.targetDeadline,
+      window:w?{title:w.title,processName:w.processName,processId:w.processId,handle:w.handle}:null}});
+  }
 }

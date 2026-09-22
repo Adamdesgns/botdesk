@@ -8,7 +8,9 @@ Host, owner, bot and provisioning credentials are separate. A bot credential can
 
 The relay stores credential hashes. Host credentials saved in config.json are encrypted using Electron safeStorage backed by Windows. This protects data at rest, not against malware running as the same Windows user. The one-time provisioning output file contains plaintext secrets and must stay out of source control, captures and bot conversations.
 
-A start/end window is stored only after an authenticated owner request. Restarting the relay starts command execution off. A still-valid saved window may arm a connected host after the host acknowledges the new session. Host application restart loses its target selection and cannot grant access until a target is selected locally again.
+A start/end window is stored only after an authenticated owner request. Restarting the relay starts command execution off. A still-valid saved window may arm a connected host after the host acknowledges the new session. Host application restart loses its target selection and cannot grant access until the owner selects a target again. With phone access enabled locally, the owner may use STOP & CHOOSE on the phone; that cancels the schedule and leaves control OFF until a separate GO LIVE.
+
+Phone target review is owner-authenticated and never a bot command. It lists eligible-window metadata only, expires after 60 seconds and requires the exact candidate to pass identity, title, geometry and safety checks again on approval. Temporary approval expires within five minutes and is revoked by STOP, pause, disconnect or expiry. There is no automatic parent-window fallback and no capture of an unapproved candidate. See [window recovery](WINDOW-RECOVERY-2026-09-22.md) for implementation and evidence boundaries.
 
 ## Command controls
 

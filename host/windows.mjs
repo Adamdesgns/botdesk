@@ -5,7 +5,7 @@ const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 // PowerShell cannot open files inside Electron's archive. The installer unpacks this helper.
 const helperPath = path.resolve(moduleDir, '../scripts/windows-helper.ps1').replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
 const MAX_OUTPUT_BYTES = 24 * 1024 * 1024;
-const ACTIONS = new Set(['foreground', 'list_windows', 'list_monitors', 'focus', 'capture', 'snapshot', 'click', 'move', 'drag', 'type', 'key', 'scroll', 'clipboard_read', 'clipboard_write']);
+const ACTIONS = new Set(['inspect', 'foreground', 'list_windows', 'list_monitors', 'focus', 'capture', 'snapshot', 'click', 'move', 'drag', 'type', 'key', 'scroll', 'clipboard_read', 'clipboard_write']);
 // release_left stays out of ACTIONS: only drag cleanup calls runSingleHelper directly.
 const DRAG_TIMING_PREFIX = 'BOTDESK_DRAG_TIMING ';
 const DRAG_TIMING_FIELDS = ['phase', 'checkCount', 'moveCount', 'elapsedMs', 'costMs', 'targetMs', 'pointMs', 'completed'];
@@ -168,6 +168,7 @@ export async function foregroundWindow(options) {
   return result.ok ? result.window : {};
 }
 export const listWindows = (options) => runWindowsAction('list_windows', {}, options);
+export const inspect = (args, options) => runWindowsAction('inspect', args, options);
 export const listMonitors = (options) => runWindowsAction('list_monitors', {}, options);
 export const focus = (args, options) => runWindowsAction('focus', args, options);
 export const capture = (args, options) => runWindowsAction('capture', args, { timeoutMs: 15000, ...options });
