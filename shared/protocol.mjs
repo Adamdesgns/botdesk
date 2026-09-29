@@ -29,7 +29,7 @@ export const COMMANDS = Object.freeze([
 /** Owner-visible product capabilities reported by status/capabilities. */
 export const CAPABILITY_FLAGS = Object.freeze({
   selectedWindowControl: true,
-  fullDesktopMode: false,
+  fullDesktopMode: true,
   accessibilitySnapshot: true,
   dragPaths: true,
   horizontalScroll: true,

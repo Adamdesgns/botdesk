@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyWindow, validateCommand, DEFAULT_APP_ALLOWLIST, isAllowedWindow } from '../host/guard.mjs';
+import { classifyWindow, classifyPcWindow, validateCommand, DEFAULT_APP_ALLOWLIST, isAllowedWindow } from '../host/guard.mjs';
 const window = Object.freeze({handle:'100',processId:23,processName:'msedge',title:'Example document',integrity:'medium',desktop:'default',automationChecked:true,passwordFocused:false,passwordPresent:false,geometry:{x:-100,y:20,width:1000,height:600}});
 const context = () => ({mode:'armed',now:1000,expiresAt:2000,targetWindow:window,foreground:window});
 
@@ -53,14 +53,23 @@ test('configured allowlist cannot permit shell or code editor processes', () => 
   }
 });
 
-test('focus may restore the approved target when another window is foreground', () => {
-  const other = { ...window, handle: '200', processId: 99, processName: 'chrome', title: 'Unrelated tab' };
-  assert.equal(validateCommand('focus', {}, { ...context(), foreground: other }).allowed, true);
-  assert.equal(validateCommand('focus', {}, { ...context(), mode: 'off', foreground: other }).category, 'not-armed');
-  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: null, foreground: other }).category, 'target-required');
-  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, title: 'Sign in to account' }, foreground: other }).category, 'credential');
-  assert.equal(validateCommand('focus', {}, { ...context(), targetWindow: { ...window, processName: 'firefox' }, foreground: other, allowedApps: ['msedge'] }).category, 'app-blocked');
-  assert.equal(validateCommand('click', { x: 1, y: 2 }, { ...context(), foreground: other }).category, 'target-changed');
+test('PC access follows the owner blocklist across ordinary windows without one selected HWND', () => {
+  const explorer = { ...window, handle: '200', processId: 44, processName: 'explorer', title: 'Select the extension directory' };
+  const pc = { ...context(), accessMode: 'pc-access', targetWindow: null, foreground: explorer, blockedApps: ['chrome'] };
+  assert.equal(validateCommand('screenshot', {}, pc).allowed, true);
+  assert.equal(validateCommand('click', { x: 5, y: 5 }, pc).allowed, true);
+  assert.equal(validateCommand('list_windows', {}, { ...pc, foreground: { ...explorer, title: 'Sign in' } }).allowed, true);
+  assert.equal(validateCommand('focus', {}, { ...pc, targetWindow: explorer }).allowed, true);
+  assert.equal(validateCommand('focus', {}, { ...pc, targetWindow: { ...explorer, processName: 'chrome' } }).category, 'app-blocked');
+  assert.equal(validateCommand('screenshot', {}, { ...pc, foreground: { ...explorer, processName: 'chrome' } }).category, 'app-blocked');
+  assert.equal(validateCommand('screenshot', {}, { ...pc, foreground: { ...explorer, title: 'Sign in' } }).category, 'credential');
+  assert.equal(validateCommand('screenshot', {}, { ...pc, foreground: { ...explorer, integrity: 'high' } }).category, 'elevated');
+  assert.equal(validateCommand('screenshot', {}, { ...pc, mode: 'off' }).category, 'not-armed');
+  assert.equal(classifyPcWindow({ ...explorer, processName: 'botdesk' }, []).category, 'app-blocked');
+  for (const processName of ['taskmgr', 'mmc', 'control', 'SystemSettings', 'SecurityHealthHost', 'CredentialUIBroker']) {
+    assert.equal(classifyPcWindow({ ...explorer, processName }, []).category, 'app-blocked', processName);
+  }
+  assert.equal(classifyPcWindow({ ...explorer, title: 'Task Manager' }, []).category, 'system');
 });
 
 test('list_monitors is armed-only and does not require the approved window to stay foreground', () => {

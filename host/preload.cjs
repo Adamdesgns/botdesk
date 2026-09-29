@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('botdesk',{
   setStudioAccess:enabled=>ipcRenderer.invoke('botdesk:set-studio-access',enabled),
   listWindows:()=>ipcRenderer.invoke('botdesk:windows'),
   selectWindow:handle=>ipcRenderer.invoke('botdesk:select-window',handle),
+  setAccessPolicy:policy=>ipcRenderer.invoke('botdesk:set-access-policy',policy),
   openCaptures:()=>ipcRenderer.invoke('botdesk:captures'),
   copyOwnerLink:()=>ipcRenderer.invoke('botdesk:copy-owner-link'),
   showMain:()=>ipcRenderer.invoke('botdesk:show'),

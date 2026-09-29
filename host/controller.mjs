@@ -2,8 +2,9 @@ import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { clampArmMinutes, CAPABILITY_FLAGS } from '../shared/protocol.mjs';
 import { CONTRACT_VERSION } from '../shared/errors.mjs';
-import { validateCommand, isAllowedWindow } from './guard.mjs';
+import { validateCommand, isAllowedWindow, classifyPcWindow } from './guard.mjs';
 import { TargetRecovery, sameTarget, TEMPORARY_TARGET_MS } from './target-recovery.mjs';
+import { normalizeBlockedApps } from './config-store.mjs';
 const INPUT = new Set(['click', 'move', 'type', 'key', 'scroll', 'drag']);
 const READ = new Set(['screenshot', 'snapshot']);
 const fail = (error, message = error) => ({ok:false, error, message});
@@ -16,7 +17,7 @@ export class HostController extends EventEmitter {
     this.targetWindow=null; this.snapshots=new Map(); this.epoch=0; this.controlGeneration=null;
     this.operation=null; this.expiryTimer=null; this.seen=new Set(); this.stopLatched=false; this.inputSafetyFault=null;
     this.recording=false; this.recordAbort=null;
-    this.targetHealth={state:'missing',checkedAt:null,reason:null}; this.targetDeadline=null;
+    this.targetHealth={state:configStore.load().accessMode==='pc-access'?'pc-access':'missing',checkedAt:null,reason:null}; this.targetDeadline=null;
     this.recovery=new TargetRecovery(this); this.ownerOperation=false;
   }
   attachRelay(relay) {
@@ -25,19 +26,20 @@ export class HostController extends EventEmitter {
       this.relayStatus=status;
       if (!status.authenticated) this.setMode('off', {source:'relay-disconnected',notify:this.mode!=='off'});
       if (!status.authenticated) this.recovery.clear();
-      if (status.authenticated) void this.revalidateTarget();
+      if (status.authenticated && this.configStore.load().accessMode !== 'pc-access') void this.revalidateTarget();
       this.emitStatus();
     });
   }
   getStatus() {
     if (this.targetDeadline && this.clock()>=this.targetDeadline) this.invalidateTarget('temporary-target-expired');
     if (this.expiresAt && this.clock()>=this.expiresAt) this.setMode('off', {source:'expiry'});
+    const config=this.configStore.load();
     return {mode:this.mode, expiresAt:this.expiresAt, activeBot:this.activeBot, recording:this.recording,
       relay:this.relayStatus, stopLatched:this.stopLatched, inputSafetyFault:this.inputSafetyFault, targetWindow:this.targetWindow,
       targetHealth:this.targetHealth, targetDeadline:this.targetDeadline,
-      allowRemoteArm:Boolean(this.configStore.load().allowRemoteArm), hostId:this.configStore.load().hostId||null,
-      contractVersion:CONTRACT_VERSION, capabilities:CAPABILITY_FLAGS,
-      scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:false}};
+      allowRemoteArm:Boolean(config.allowRemoteArm), hostId:config.hostId||null,
+      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:config.accessMode==='pc-access',clipboard:config.accessMode!=='pc-access'},
+      scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:config.accessMode==='pc-access', blockedApps:config.blockedApps}};
   }
   selectTarget(window, {temporary=false,notify=true}={}) {
     this.setMode('off', {source:'target-changed',notify}); this.targetWindow=window ? structuredClone(window) : null;
@@ -51,6 +53,7 @@ export class HostController extends EventEmitter {
     return fail('target-reselect-required',reason);
   }
   async revalidateTarget(options) {
+    if(this.configStore.load().accessMode==='pc-access')return {ok:true};
     const target=this.targetWindow, epoch=this.epoch;
     if(!target)return fail('target-required');
     let current;
@@ -66,16 +69,25 @@ export class HostController extends EventEmitter {
   async ownerTarget({action,...args}) {
     if(this.ownerOperation)return fail('host-busy');
     this.ownerOperation=true;
-    try { return {ok:true,result:action==='list'?await this.recovery.list():action==='approve'?await this.recovery.approve(args):(()=>{throw new Error('invalid-target-action');})()}; }
+    try { return {ok:true,result:action==='list'?await this.recovery.list():action==='approve'?await this.recovery.approve(args):action==='policy'?this.setAccessPolicy(args,{notify:false}):(()=>{throw new Error('invalid-target-action');})()}; }
     catch(error){return fail(error.message);}
     finally{this.ownerOperation=false;}
+  }
+  setAccessPolicy({accessMode,blockedApps},{notify=true}={}) {
+    if(!['selected-window','pc-access'].includes(accessMode))throw new Error('invalid-access-mode');
+    const normalized=normalizeBlockedApps(blockedApps);
+    this.setMode('off',{source:'access-policy-changed',notify});
+    this.targetWindow=null;this.targetDeadline=null;this.snapshots.clear();this.recovery.clear();
+    this.configStore.save({accessMode,blockedApps:normalized});
+    this.targetHealth={state:accessMode==='pc-access'?'pc-access':'missing',checkedAt:this.clock(),reason:null};
+    this.emitStatus();return this.getStatus();
   }
   whenIdle() { return this.idlePromise || Promise.resolve(); }
   clearLocalStop() { if(this.inputSafetyFault)throw new Error(this.inputSafetyFault);this.stopLatched=false; this.emitStatus(); }
   setMode(mode, {minutes=480, expiresAt, source='local', generation, notify=true}={}) {
     if (!['off','armed','paused'].includes(mode)) throw new Error('invalid-mode');
     if(mode==='armed'&&this.inputSafetyFault)throw new Error(this.inputSafetyFault);
-    if (mode==='armed' && (this.stopLatched||!this.targetWindow)) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
+    if (mode==='armed' && (this.stopLatched||(!this.targetWindow&&this.configStore.load().accessMode!=='pc-access'))) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
     if(mode==='armed'&&this.targetDeadline&&this.clock()>=this.targetDeadline)throw new Error('temporary-target-expired');
     this.recovery.clear();
     if(mode!=='armed'&&this.targetDeadline){
@@ -101,14 +113,14 @@ export class HostController extends EventEmitter {
       if (mode==='armed') {
         if (!this.configStore.load().allowRemoteArm) throw new Error('remote-arm-disabled');
         if (this.stopLatched) throw new Error('local-stop-latched');
-        if (!this.targetWindow) throw new Error('select-a-window-first');
+        const pcAccess=this.configStore.load().accessMode==='pc-access';
+        if (!this.targetWindow&&!pcAccess) throw new Error('select-a-window-first');
         if (!Number.isFinite(expiresAt)||expiresAt<=this.clock()) throw new Error('expired-arm-request');
         const epoch=this.epoch;
         if(this.ownerOperation)throw new Error('host-busy');
-        const valid=await this.revalidateTarget();
-        if(!valid.ok)throw new Error(valid.error);
+        if(!pcAccess){const valid=await this.revalidateTarget();if(!valid.ok)throw new Error(valid.error);}
         if(this.targetDeadline&&expiresAt>this.targetDeadline)throw new Error('temporary-target-limit');
-        if(this.executor.focus){
+        if(!pcAccess&&this.executor.focus){
           const focused=await this.executor.focus(this.targetWindow);
           if(epoch!==this.epoch||this.stopLatched)throw new Error('local-stop-latched');
           if(!focused.ok)throw new Error(focused.error||'focus-refused');
@@ -120,9 +132,11 @@ export class HostController extends EventEmitter {
     this.relay?.send({type:'owner_state_result',requestId,controlGeneration,...result}); return result;
   }
   async runCommand({commandId,name,args={},botId='remote-bot',controlGeneration,expiresAt}) {
+    const access=this.configStore.load();
+    const pcAccess=access.accessMode==='pc-access';
     if(name==='status' || name==='capabilities') return {ok:true,result:name==='capabilities'?{
-      contractVersion:CONTRACT_VERSION, capabilities:CAPABILITY_FLAGS, mode:this.mode, expiresAt:this.expiresAt,
-      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:false},
+      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:pcAccess,clipboard:!pcAccess}, mode:this.mode, expiresAt:this.expiresAt,
+      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, blockedApps:access.blockedApps},
       limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.']
     }:this.getStatus()};
     if(name==='stop_all') {this.setMode('off',{source:'bot-stop'});return {ok:true,result:this.getStatus()};}
@@ -144,24 +158,23 @@ export class HostController extends EventEmitter {
       if(!['armed','running'].includes(this.mode))return fail('not-armed');
       if(name==='list_monitors') {
         const verdict=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),
-          foreground:{},targetWindow:this.targetWindow||{handle:'0',processId:1},allowedApps:this.configStore.load().allowedApps});
+          foreground:{},targetWindow:this.targetWindow||{handle:'0',processId:1},allowedApps:access.allowedApps,accessMode:access.accessMode,blockedApps:access.blockedApps});
         if(!verdict.allowed)return fail(verdict.category,verdict.reason);
         const result=await this.executor.run(name,args,{signal:operation.signal});
         if(!result.ok)return fail(result.error||'command-failed',result.message||result.error);
         return {ok:true,result};
       }
-      const valid=await this.revalidateTarget({signal:operation.signal});
-      if(!valid.ok)return valid;
+      if(!pcAccess){const valid=await this.revalidateTarget({signal:operation.signal});if(!valid.ok)return valid;}
       let foreground=await this.executor.foreground({signal:operation.signal});
       if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
-      const canRestore=READ.has(name)||name==='list_windows';
+      const canRestore=!pcAccess&&(READ.has(name)||name==='list_windows');
       const target=this.targetWindow;
       if(canRestore && this.executor.focus && target &&
         (String(foreground.handle)!==String(target.handle)||foreground.processId!==target.processId)) {
         // Check the session and approved target before any focus change. The native
         // executor verifies current desktop, privileges and sensitive controls too.
         const preflight=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),
-          foreground:target,targetWindow:target,allowedApps:this.configStore.load().allowedApps});
+          foreground:target,targetWindow:target,allowedApps:access.allowedApps});
         if(!preflight.allowed)return fail(preflight.category,preflight.reason);
         this.snapshots.clear();
         const focused=await this.executor.focus(target,{signal:operation.signal});
@@ -170,8 +183,16 @@ export class HostController extends EventEmitter {
         foreground=await this.executor.foreground({signal:operation.signal});
       }
       if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
+      let focusTarget=this.targetWindow;
+      if(pcAccess&&name==='focus'){
+        if(typeof args.windowHandle!=='string'||!/^[1-9][0-9]{0,18}$/.test(args.windowHandle))return fail('invalid-target');
+        const listed=await this.executor.listWindows({signal:operation.signal,accessMode:access.accessMode,blockedApps:access.blockedApps});
+        if(!listed.ok)return fail(listed.error||'window-list-unavailable');
+        focusTarget=listed.windows?.find(w=>w.handle===args.windowHandle);
+        if(!focusTarget)return fail('target-unavailable');
+      }
       const verdict=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),foreground,
-        targetWindow:this.targetWindow,allowedApps:this.configStore.load().allowedApps});
+        targetWindow:focusTarget,allowedApps:access.allowedApps,accessMode:access.accessMode,blockedApps:access.blockedApps});
       if(!verdict.allowed) {
         this.auditLog.write({botId,command:name,outcome:verdict.category,app:foreground.processName});
         return fail(verdict.category,verdict.reason);
@@ -186,29 +207,31 @@ export class HostController extends EventEmitter {
       }
       if(botId!=='owner-preview'){this.activeBot=botId;this.leaseEndsAt=this.clock()+60000;}
       this.mode='running';this.emitStatus();
-      let result;const nativeArgs={...args,expectedWindow:this.targetWindow,geometry:snapshot?.window.geometry,snapshotTitle:snapshot?.window.title};
+      let result;const nativeArgs={...args,expectedWindow:pcAccess?foreground:this.targetWindow,geometry:snapshot?.window.geometry,snapshotTitle:snapshot?.window.title,
+        accessMode:access.accessMode,blockedApps:access.blockedApps};
       if(name==='focus') {
-        const focused=await this.executor.focus(this.targetWindow,{signal:operation.signal});
+        const focused=await this.executor.focus(focusTarget,{signal:operation.signal,accessMode:access.accessMode,blockedApps:access.blockedApps});
         if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
         if(!focused.ok){
           const refused=focused.error==='focus-refused'||focused.error==='target-not-foreground';
-          this.auditLog.write({botId,command:name,outcome:focused.error||'focus-refused',app:this.targetWindow.processName});
+          this.auditLog.write({botId,command:name,outcome:focused.error||'focus-refused',app:focusTarget.processName});
           return fail(refused?'focus-refused':focused.error||'focus-refused', refused?'Windows refused to foreground the approved window.':focused.message||focused.error||'focus-refused');
         }
         const restored=await this.executor.foreground({signal:operation.signal});
         if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
-        if(String(this.targetWindow.handle)!==String(restored.handle)||this.targetWindow.processId!==restored.processId){
-          this.auditLog.write({botId,command:name,outcome:'target-changed',app:this.targetWindow.processName});
+        if(String(focusTarget.handle)!==String(restored.handle)||focusTarget.processId!==restored.processId){
+          this.auditLog.write({botId,command:name,outcome:'target-changed',app:focusTarget.processName});
           return fail('target-changed','The approved window could not be restored to the foreground.');
         }
         const post=validateCommand('screenshot',{},{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),foreground:restored,
-          targetWindow:this.targetWindow,allowedApps:this.configStore.load().allowedApps});
+          targetWindow:focusTarget,allowedApps:access.allowedApps,accessMode:access.accessMode,blockedApps:access.blockedApps});
         if(!post.allowed){
           this.auditLog.write({botId,command:name,outcome:post.category,app:restored.processName});
           return fail(post.category,post.reason);
         }
-        result={ok:true,focused:true,window:restored};
+        this.snapshots.clear();result={ok:true,focused:true,window:restored};
       } else if(name==='record_start') {
+        if(pcAccess)return fail('pc-recording-unavailable','Recording across changing apps is not available yet.');
         if(this.recording)return fail('already-recording');
         const abort=new AbortController();this.recordAbort=abort;
         operation.signal.addEventListener('abort',()=>abort.abort(),{once:true});
@@ -246,7 +269,8 @@ export class HostController extends EventEmitter {
   emergencyStop(source='local-hotkey'){this.stopLatched=true;return this.setMode('off',{source});}
   emitStatus(){const status=this.getStatus();this.emit('status',status);
     const w=status.targetWindow;
-    this.relay?.send({type:'target_status',target:{...status.targetHealth,temporaryUntil:status.targetDeadline,
+      this.relay?.send({type:'target_status',target:{...status.targetHealth,temporaryUntil:status.targetDeadline,
+      accessMode:this.configStore.load().accessMode,blockedApps:this.configStore.load().blockedApps,
       window:w?{title:w.title,processName:w.processName,processId:w.processId,handle:w.handle}:null}});
   }
 }

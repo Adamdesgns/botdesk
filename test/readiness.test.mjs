@@ -63,6 +63,13 @@ test('target must identify a real selected process; changing status never mutate
   assert.equal(frozen.allowRemoteArm, true);
 });
 
+test('PC access is ready without selecting one window after pairing and phone access are saved', () => {
+  const state = deriveReadiness({ ...paired, accessMode: 'pc-access', allowRemoteArm: true }, connected);
+  assert.equal(state.ready, true);
+  assert.equal(state.selected, true);
+  assert.equal(state.labels.window, 'PC access selected');
+});
+
 test('countdown handles missing state, expiration, subsecond rounding and an overnight session', () => {
   for (const value of [undefined, null, NaN, Infinity, '1234']) assert.equal(formatSessionClock(value, 0), '—');
   assert.equal(formatSessionClock(1000, 1001), '00:00:00');

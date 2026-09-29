@@ -63,4 +63,4 @@ export function formatBotError(code, detail = '') {
   return cleanDetail ? `${code}: ${cleanDetail} — ${hint}` : `${code}: ${hint}`;
 }
 
-export const CONTRACT_VERSION = '1.3.0';
+export const CONTRACT_VERSION = '1.4.0';

@@ -15,6 +15,12 @@ const SAFE_KEYS = new Set([
 export const DEFAULT_APP_ALLOWLIST = Object.freeze(['msedge', 'chrome', 'firefox', 'notepad']);
 export const SUPPORTED_APP_ALLOWLIST = Object.freeze([...DEFAULT_APP_ALLOWLIST, 'robloxstudiobeta']);
 const UNSAFE_APPS = new Set(['powershell', 'pwsh', 'cmd', 'windowsterminal', 'conhost', 'regedit', 'taskmgr', 'mmc', 'explorer', 'code', 'wscript', 'cscript', 'python', 'pythonw']);
+const PC_PROTECTED_APPS = new Set(['botdesk', 'powershell', 'pwsh', 'cmd', 'windowsterminal', 'conhost', 'regedit', 'taskmgr', 'mmc', 'control', 'systemsettings', 'securityhealthhost', 'credentialuibroker', 'wscript', 'cscript', 'python', 'pythonw', 'code']);
+const PC_PROTECTED_PATTERNS = Object.freeze({
+  financial: DENY_PATTERNS.financial,
+  credential: DENY_PATTERNS.credential,
+  system: [/user\s*account\s*control/i, /\buac\b/i, /windows\s*security/i, /windows\s*defender/i, /task\s*manager/i, /registry\s*editor/i, /device\s*manager/i, /control\s*panel/i, /group\s*policy/i]
+});
 const normalizeApp = (value) => String(value || '').trim().toLowerCase().replace(/\.exe$/, '');
 const reject = (category, reason) => ({ allowed: false, category, reason });
 const inGeometry = (args, geometry) => geometry && Number.isInteger(args.x) && Number.isInteger(args.y) && args.x >= 0 && args.y >= 0 && args.x < geometry.width && args.y < geometry.height;
@@ -37,6 +43,21 @@ export function isAllowedWindow(window, allowedApps = DEFAULT_APP_ALLOWLIST) {
   return SUPPORTED_APP_ALLOWLIST.includes(app) && Array.isArray(allowedApps) &&
     allowedApps.map(normalizeApp).includes(app) && classifyWindow(window).allowed;
 }
+export function classifyPcWindow(window = {}, blockedApps = []) {
+  const joined = [window.processName, window.title].filter(Boolean).join(' ');
+  for (const [category, patterns] of Object.entries(PC_PROTECTED_PATTERNS)) {
+    if (patterns.some(pattern => pattern.test(joined))) return reject(category, `${category} windows are off-limits.`);
+  }
+  const integrity = String(window.integrity || '').toLowerCase();
+  if (!['low', 'medium'].includes(integrity)) return reject(integrity === 'unknown' || !integrity ? 'unknown-integrity' : 'elevated', 'The target must have verified ordinary Windows privileges.');
+  if (window.desktop !== 'default') return reject('desktop-blocked', 'The normal unlocked interactive desktop is required.');
+  if (window.automationChecked !== true) return reject('automation-unavailable', 'Windows could not verify the target controls.');
+  if (window.passwordFocused !== false || window.passwordPresent !== false) return reject('credential', 'Password controls are off-limits.');
+  if (!window.handle || !Number.isInteger(window.processId) || window.processId <= 0 || !window.processName || !window.title) return reject('unknown-window', 'The target window could not be verified.');
+  const app = normalizeApp(window.processName);
+  if (PC_PROTECTED_APPS.has(app) || blockedApps.map(normalizeApp).includes(app)) return reject('app-blocked', 'This app is blocked for PC access.');
+  return { allowed: true, category: 'ordinary', reason: '' };
+}
 export function validateCommand(name, args = {}, context = {}) {
   if (!isCommand(name)) return reject('unknown-command', 'Unknown command.');
   if (name === 'status' || name === 'capabilities' || name === 'stop_all') return { allowed: true };
@@ -45,17 +66,24 @@ export function validateCommand(name, args = {}, context = {}) {
   if (name === 'list_monitors') return { allowed: true };
   const target = context.targetWindow;
   const foreground = context.foreground || {};
-  if (!target?.handle || !Number.isInteger(target.processId)) return reject('target-required', 'Choose a target window on the PC first.');
-  if (name === 'focus') {
+  const pcAccess = context.accessMode === 'pc-access';
+  if (pcAccess) {
+    if (name === 'list_windows') return { allowed: true };
+    if (name === 'clipboard_read' || name === 'clipboard_write') return reject('pc-clipboard-unavailable', 'Clipboard access is unavailable in PC access mode.');
+    if (name === 'focus') return classifyPcWindow(target, context.blockedApps);
+    const verdict = classifyPcWindow(foreground, context.blockedApps);
+    if (!verdict.allowed) return verdict;
+  } else if (!target?.handle || !Number.isInteger(target.processId)) return reject('target-required', 'Choose a target window on the PC first.');
+  if (!pcAccess && name === 'focus') {
     const verdict = classifyWindow(target);
     if (!verdict.allowed) return verdict;
     if (!isAllowedWindow(target, context.allowedApps || DEFAULT_APP_ALLOWLIST)) return reject('app-blocked', 'The approved app is not on the local allowlist.');
     return { allowed: true };
   }
-  if (name !== 'list_monitors' && (String(target.handle) !== String(foreground.handle) || target.processId !== foreground.processId)) {
+  if (!pcAccess && name !== 'list_monitors' && (String(target.handle) !== String(foreground.handle) || target.processId !== foreground.processId)) {
     return reject('target-changed', 'The approved window must remain in the foreground.');
   }
-  if (name !== 'list_monitors') {
+  if (!pcAccess && name !== 'list_monitors') {
     const verdict = classifyWindow(foreground);
     if (!verdict.allowed) return verdict;
     if (!isAllowedWindow(foreground, context.allowedApps || DEFAULT_APP_ALLOWLIST)) return reject('app-blocked', 'The focused app is not on the local allowlist.');

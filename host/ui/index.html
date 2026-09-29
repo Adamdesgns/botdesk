@@ -49,22 +49,28 @@
         </div>
 
         <div class="step-panel" data-panel="window" id="windowPanel" role="tabpanel" aria-labelledby="windowTab" hidden>
-          <div class="panel-heading"><span class="step-label">STEP 02</span><h3>One window. A clear boundary.</h3><p>Open the app your bot should use, then select its window here. Your bot’s screenshots and actions stay inside that selected window.</p></div>
+          <div class="panel-heading"><span class="step-label">STEP 02</span><h3>Choose app access.</h3><p>Use one selected window, or allow ordinary apps across this PC except those you block. Access remains off until you go live.</p></div>
+          <label class="toggle-row" for="pcAccess"><span><strong>PC access across unblocked apps</strong><small>No window selection needed. Protected and elevated windows remain off-limits.</small></span><input id="pcAccess" type="checkbox"></label>
+          <label for="blockedApps">Apps the bot cannot use<input id="blockedApps" placeholder="discord, steam" spellcheck="false"></label>
+          <button id="saveAccessPolicy" class="button ink" type="button">Save access rules</button>
+          <p class="field-help">Saving access rules stops the current session. Go live separately after reviewing them.</p>
+          <div id="selectedWindowControls">
           <div class="window-illustration" aria-hidden="true"><div class="mock-titlebar"><i></i><i></i><i></i><span>YOUR SELECTED WINDOW</span></div><div class="mock-content"><div class="mock-side"></div><div class="mock-lines"><b></b><b></b><b></b><span>BOT ACCESS</span></div><div class="mock-cursor">↖</div></div></div>
           <label class="toggle-row" for="studioAccess"><span><strong>Allow Roblox Studio for this PC</strong><small>For local game tests. Changing this stops access and clears the selected window.</small></span><input id="studioAccess" type="checkbox"></label>
           <div class="field-heading"><label for="targetWindow">Available app windows</label><button id="refreshWindows" class="text-button" type="button">Refresh <span aria-hidden="true">↻</span></button></div>
           <select id="targetWindow" aria-describedby="targetDetail"><option value="">Refresh to choose a window</option></select>
           <p class="field-help" id="targetDetail">Choose an app window before arming. Only that window is captured and controlled.</p>
+          </div>
           <p class="inline-feedback" id="windowFeedback" role="status"></p>
           <div class="boundary-note"><span aria-hidden="true">↳</span><p>Use a dedicated browser profile for bot work. You’ll choose the window again after restarting BotDesk.</p></div>
-          <div class="panel-footer"><span>Browsers, Notepad, or opted-in Roblox Studio</span><button id="continuePhone" class="text-button" type="button">Phone access <span aria-hidden="true">→</span></button></div>
+          <div class="panel-footer"><span id="windowScopeSummary">Review access rules before going live</span><button id="continuePhone" class="text-button" type="button">Phone access <span aria-hidden="true">→</span></button></div>
         </div>
 
         <div class="step-panel" data-panel="phone" id="phonePanel" role="tabpanel" aria-labelledby="phoneTab" hidden>
           <div class="panel-heading"><span class="step-label">STEP 03</span><h3>Leave with the controls.</h3><p>Turn access on from your phone, or set a window like 6 AM–6 PM. The timer ends access automatically.</p></div>
           <div class="schedule-example" aria-label="Example twelve-hour access window"><div><span>START</span><strong>6:00<span>AM</span></strong></div><div class="schedule-line"><i></i><span>YOUR HOURS</span><i></i></div><div><span>STOP</span><strong>6:00<span>PM</span></strong></div></div>
           <label class="toggle-row" for="remoteArm"><span><strong>Allow access from my phone</strong><small>Only while BotDesk is running on this PC.</small></span><input id="remoteArm" type="checkbox"></label>
-          <label class="toggle-row" for="startAtLogin"><span><strong>Start BotDesk when I sign in</strong><small>Optional. You’ll still select a window.</small></span><input id="startAtLogin" type="checkbox"></label>
+          <label class="toggle-row" for="startAtLogin"><span><strong>Start BotDesk when I sign in</strong><small>Optional. Your saved app access rules will be used.</small></span><input id="startAtLogin" type="checkbox"></label>
           <div class="inline-actions"><button id="savePhoneButton" class="button ink" type="button">Save phone settings</button><button id="copyOwnerLink" class="button light" type="button">Copy private phone link <span aria-hidden="true">↗</span></button></div>
           <p class="inline-feedback" id="phoneFeedback" role="status"></p><p class="field-help" id="copyPhoneFeedback"></p>
           <div class="boundary-note"><span aria-hidden="true">↳</span><p>Keep the owner link for yourself. Leave Windows awake and unlocked. Phone access cannot unlock or power on this PC.</p></div>
@@ -78,7 +84,7 @@
         <div class="clock-block"><span>TIME REMAINING</span><strong id="sessionClock">—</strong></div>
         <label class="session-duration" for="sessionMinutes">Session length<select id="sessionMinutes"><option value="5">5 minutes</option><option value="30" selected>30 minutes</option><option value="60">1 hour</option><option value="480">8 hours</option></select></label>
         <div class="session-actions"><button id="armButton" class="button cream" type="button">Go live <span aria-hidden="true">↗</span></button><button id="pauseButton" class="button outline" type="button">Pause access</button><button id="stopButton" class="button stop" type="button"><span class="stop-square" aria-hidden="true"></span>STOP NOW</button><button id="unlockButton" class="button outline" type="button" hidden>Unlock local stop</button></div>
-        <dl class="session-facts"><div><dt>PC connection</dt><dd id="relayState">Offline</dd></div><div><dt>Selected window</dt><dd id="selectedWindowName">Choose a window</dd></div><div><dt>Bot activity</dt><dd id="botActivity">No active bot</dd></div><div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div></dl>
+        <dl class="session-facts"><div><dt>PC connection</dt><dd id="relayState">Offline</dd></div><div><dt>Access scope</dt><dd id="selectedWindowName">Choose access</dd></div><div><dt>Bot activity</dt><dd id="botActivity">No active bot</dd></div><div><dt>Recording</dt><dd id="recordingState">Stopped</dd></div></dl>
 
         <p class="console-hint" id="goLiveHint">Pair this PC and choose a window before going live.</p>
         <p class="result" id="saveResult" role="status" aria-live="polite"></p>

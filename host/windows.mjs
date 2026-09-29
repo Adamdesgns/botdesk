@@ -167,7 +167,7 @@ export async function foregroundWindow(options) {
   const result = await runWindowsAction('foreground', {}, options);
   return result.ok ? result.window : {};
 }
-export const listWindows = (options) => runWindowsAction('list_windows', {}, options);
+export const listWindows = (options = {}) => runWindowsAction('list_windows', { accessMode: options.accessMode, blockedApps: options.blockedApps }, options);
 export const inspect = (args, options) => runWindowsAction('inspect', args, options);
 export const listMonitors = (options) => runWindowsAction('list_monitors', {}, options);
 export const focus = (args, options) => runWindowsAction('focus', args, options);

@@ -3,7 +3,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_APP_ALLOWLIST, SUPPORTED_APP_ALLOWLIST } from './guard.mjs';
 const SECRETS=['hostToken','ownerToken','botToken'];
-const DEFAULTS={relayUrl:'',hostId:'',hostToken:'',ownerToken:'',botToken:'',allowRemoteArm:false,startAtLogin:false,allowedApps:[...DEFAULT_APP_ALLOWLIST]};
+const DEFAULTS={relayUrl:'',hostId:'',hostToken:'',ownerToken:'',botToken:'',allowRemoteArm:false,startAtLogin:false,allowedApps:[...DEFAULT_APP_ALLOWLIST],accessMode:'selected-window',blockedApps:[]};
+export function normalizeBlockedApps(value){
+  if(!Array.isArray(value)||value.length>64)throw new Error('Invalid blocked app list.');
+  const normalized=value.map(app=>{
+    if(typeof app!=='string')throw new Error('Invalid blocked app name.');
+    const name=app.trim().toLowerCase().replace(/\.exe$/,'');
+    if(!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(name))throw new Error('Invalid blocked app name.');
+    return name;
+  });
+  return [...new Set(normalized)].sort();
+}
 export function relayOrigin(value){
   const url=new URL(value);
   if(url.username||url.password||url.search||url.hash||url.pathname!=='/')throw new Error('Relay URL must be an origin without credentials or path.');
@@ -25,6 +35,8 @@ export class ConfigStore{
     }
     if(!Array.isArray(result.allowedApps))throw new Error('Invalid app list.');
     result.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>result.allowedApps.includes(x));
+    if(!['selected-window','pc-access'].includes(result.accessMode))throw new Error('Invalid access mode.');
+    result.blockedApps=normalizeBlockedApps(result.blockedApps);
     return result;
   }
   save(update){
@@ -41,6 +53,8 @@ export class ConfigStore{
     next.allowRemoteArm=next.allowRemoteArm===true;next.startAtLogin=next.startAtLogin===true;
     if(!Array.isArray(next.allowedApps))throw new Error('Invalid app list.');
     next.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>next.allowedApps.includes(x));
+    if(!['selected-window','pc-access'].includes(next.accessMode))throw new Error('Invalid access mode.');
+    next.blockedApps=normalizeBlockedApps(next.blockedApps);
     const stored={...next};
     for(const key of SECRETS){
       if(next[key]&&!this.encrypt)throw new Error('Windows credential encryption unavailable.');

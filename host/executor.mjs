@@ -13,14 +13,14 @@ export class DesktopExecutor {
   constructor({ recorder }) { this.recorder = recorder; }
   foreground(options) { return native.foregroundWindow(options); }
   inspect(targetWindow, options) { return native.inspect({ expectedWindow: targetWindow }, options); }
-  listWindows(options) { return native.listWindows(options); }
-  focus(targetWindow, options) { return native.focus({ expectedWindow: targetWindow }, options); }
+  listWindows(options = {}) { return native.runWindowsAction('list_windows', { accessMode: options.accessMode, blockedApps: options.blockedApps }, options); }
+  focus(targetWindow, options = {}) { return native.focus({ expectedWindow: targetWindow, accessMode: options.accessMode, blockedApps: options.blockedApps }, options); }
   async run(name, args, options) {
     switch (name) {
-      case 'screenshot': return native.capture({ expectedWindow: args.expectedWindow }, options);
-      case 'snapshot': return native.snapshot({ expectedWindow: args.expectedWindow }, options);
+      case 'screenshot': return native.capture({ expectedWindow: args.expectedWindow, accessMode: args.accessMode, blockedApps: args.blockedApps }, options);
+      case 'snapshot': return native.snapshot({ expectedWindow: args.expectedWindow, accessMode: args.accessMode, blockedApps: args.blockedApps }, options);
       case 'list_windows': {
-        const listed = await native.listWindows(options);
+        const listed = await this.listWindows({ ...options, accessMode: args.accessMode, blockedApps: args.blockedApps });
         if (!listed.ok) return listed;
         return { ok: true, windows: listed.windows || [] };
       }

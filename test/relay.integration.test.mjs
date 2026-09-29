@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { Miniflare, convertV4MiniflareOptions, Log, LogLevel } from 'miniflare';
 import WebSocket from 'ws';
@@ -10,7 +11,7 @@ import { RelayClient } from '../host/relay-client.mjs';
 
 const randomToken = () => randomBytes(32).toString('base64url');
 const secret = randomToken();
-const bundle = await build({ entryPoints: ['relay/src/index.ts'], bundle: true, write: false, format: 'esm', platform: 'neutral', external: ['cloudflare:*'], target: 'es2022' });
+const bundle = await build({ entryPoints: [fileURLToPath(new URL('../relay/src/index.ts', import.meta.url))], bundle: true, write: false, format: 'esm', platform: 'neutral', external: ['cloudflare:*'], target: 'es2022' });
 let mf;
 let origin;
 
@@ -180,7 +181,7 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
   assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
   const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
-  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.3.0');
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.4.0');
   assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
   const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
   assert.equal((await command(c,'screenshot')).status,200);
@@ -188,6 +189,37 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(botRoute(c),c.botToken,{name:'clipboard_write',args:{text:'fixture-path'}},{'x-bot-id':'bot-a'})).status,200);
   await client.ownerState('off');assert.equal(host.targetWindow,null);
   assert.equal((await command(c,'screenshot')).body.error,'not-armed');
+});
+
+test('owner can switch to PC access through relay and use a separate-PID dialog without selecting it', async t => {
+  const c = await provision();
+  const edge = { handle: '1001', processId: 123, processStartedAt: '111', processName: 'msedge', title: 'Extensions', integrity: 'medium', desktop: 'default', automationChecked: true, passwordFocused: false, passwordPresent: false, geometry: { x: 0, y: 0, width: 900, height: 700 } };
+  const dialog = { ...edge, handle: '2002', processId: 456, processName: 'explorer', title: 'Select the extension directory' };
+  const chrome = { ...edge, handle: '3003', processId: 789, processName: 'chrome', title: 'Browser' };
+  let foreground = edge;
+  const config = { ...c, relayUrl: origin, allowRemoteArm: true, allowedApps: ['msedge'], accessMode: 'selected-window', blockedApps: [] };
+  const host = new HostController({ configStore: { load: () => config, save: patch => Object.assign(config, patch) }, auditLog: { write: () => {} }, executor: {
+    inspect: async w => ({ ok: true, window: w }), listWindows: async () => ({ ok: true, windows: [edge, dialog, chrome] }),
+    foreground: async () => foreground, focus: async w => { foreground = w; return { ok: true }; },
+    run: async () => ({ ok: true, window: foreground }), recordStop: async () => ({ ok: true })
+  } });
+  const client = new RelayClient({ getConfig: () => config, onCommand: m => host.runCommand(m), onOwnerState: m => host.applyOwnerState(m), onOwnerTarget: m => host.ownerTarget(m) });
+  host.attachRelay(client); t.after(() => { host.emergencyStop(); client.disconnect(); });
+  const ready = new Promise(resolve => client.on('status', s => { if (s.authenticated) resolve(); })); client.connect(); await ready;
+  const policy = await api(ownerRoute(c) + '/target', c.ownerToken, { action: 'policy', accessMode: 'pc-access', blockedApps: ['chrome'] });
+  assert.equal(policy.status, 200, JSON.stringify(policy));
+  assert.equal(host.targetWindow, null);
+  await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.target?.accessMode === 'pc-access');
+  assert.equal((await client.ownerState('armed')).mode, 'armed');
+  foreground = dialog;
+  assert.equal((await command(c, 'screenshot')).status, 200);
+  assert.equal((await api(botRoute(c), c.botToken, { name: 'focus', args: { windowHandle: edge.handle } }, { 'x-bot-id': 'bot-a' })).status, 200);
+  foreground = chrome;
+  assert.equal((await command(c, 'screenshot')).body.error, 'app-blocked');
+  const updated = await api(ownerRoute(c) + '/target', c.ownerToken, { action: 'policy', accessMode: 'pc-access', blockedApps: ['chrome', 'explorer'] });
+  assert.equal(updated.status, 200, JSON.stringify(updated));
+  assert.equal(host.mode, 'off');
+  assert.equal((await command(c, 'screenshot')).body.error, 'not-armed');
 });
 
 test('failed target activation cancels automatic schedule retries and keeps the reason',async t=>{

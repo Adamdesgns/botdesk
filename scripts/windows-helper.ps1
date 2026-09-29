@@ -52,7 +52,21 @@ public static class BotDeskNative {
   public delegate bool EnumWindowProc(IntPtr hwnd,IntPtr data);
   [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowProc callback,IntPtr data);
   static readonly HashSet<string> Apps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "msedge","chrome","firefox","notepad","robloxstudiobeta" };
+  static readonly HashSet<string> PcProtectedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "botdesk","powershell","pwsh","cmd","windowsterminal","conhost","regedit","taskmgr","mmc","control","systemsettings","securityhealthhost","credentialuibroker","wscript","cscript","python","pythonw","code" };
   static readonly Regex Denied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac|regedit|powershell|terminal|devtools)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|registry\s*editor|task\s*manager|device\s*manager|control\s*panel|group\s*policy|developer\s*tools|command\s*prompt",RegexOptions.IgnoreCase);
+  static readonly Regex PcDenied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|task\s*manager|registry\s*editor|device\s*manager|control\s*panel|group\s*policy",RegexOptions.IgnoreCase);
+  public static bool PcAccess = false;
+  public static HashSet<string> BlockedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+  public static void SetPolicy(string mode,string[] blocked) {
+    if(mode!="pc-access" && mode!="selected-window") throw Block("invalid-access-mode");
+    if(blocked==null || blocked.Length>64) throw Block("invalid-blocked-apps");
+    var next=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    foreach(string value in blocked) {
+      if(value==null || !Regex.IsMatch(value,@"^[a-z0-9][a-z0-9._-]{0,79}$")) throw Block("invalid-blocked-apps");
+      next.Add(value);
+    }
+    PcAccess=mode=="pc-access"; BlockedApps=next;
+  }
   static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
     {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
@@ -141,11 +155,12 @@ public static class BotDeskNative {
     if(foreground && GetForegroundWindow()!=hwnd) throw Block("target-not-foreground");
     var process=Process.GetProcessById((int)pid);
     if(ExpectedProcessStart!=null && process.StartTime.ToUniversalTime().Ticks.ToString()!=ExpectedProcessStart) throw Block("target-changed");
-    if(process.SessionId!=Process.GetCurrentProcess().SessionId || !Apps.Contains(process.ProcessName)) throw Block("app-blocked");
+    if(process.SessionId!=Process.GetCurrentProcess().SessionId) throw Block("app-blocked");
+    if(PcAccess ? (PcProtectedApps.Contains(process.ProcessName) || BlockedApps.Contains(process.ProcessName)) : !Apps.Contains(process.ProcessName)) throw Block("app-blocked");
     string integrity=Integrity(pid);
     if(integrity!="medium" && integrity!="low") throw Block("target-integrity-blocked");
     var title=new StringBuilder(1024); GetWindowText(hwnd,title,title.Capacity);
-    if(title.Length==0 || Denied.IsMatch(title.ToString())) throw Block("sensitive-window");
+    if(title.Length==0 || (PcAccess ? PcDenied : Denied).IsMatch(title.ToString())) throw Block("sensitive-window");
   }
   static void SensitiveCheck(IntPtr hwnd,uint expectedPid,bool requireFocus) {
     var root=AutomationElement.FromHandle(hwnd);
@@ -507,6 +522,11 @@ try {
   $request = $line | ConvertFrom-Json
   $action = [string]$request.action
   $inputArgs = $request.args
+  if ($action -ne 'release_left' -and $action -notin @('foreground', 'list_monitors', 'clipboard_read', 'clipboard_write')) {
+    $accessMode = if ($null -eq $inputArgs.accessMode) { 'selected-window' } else { [string]$inputArgs.accessMode }
+    $blockedApps = if ($null -eq $inputArgs.blockedApps) { @() } else { @($inputArgs.blockedApps) }
+    [BotDeskNative]::SetPolicy($accessMode,[string[]]$blockedApps)
+  }
   if ($action -eq 'release_left') {
     [BotDeskNative]::ReleaseLeft(); $result = @{ ok = $true }
   } elseif ($action -in @('foreground', 'list_windows', 'list_monitors', 'clipboard_read')) {
@@ -538,7 +558,7 @@ try {
         [BotDeskNative]::Move($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y); $result = @{ ok = $true }
       }
       'drag' {
-        if (@($inputArgs.PSObject.Properties.Name | Where-Object { $_ -notin @('snapshotId','expectedWindow','geometry','snapshotTitle','points','durationMs') }).Count -gt 0) { throw 'invalid-drag' }
+        if (@($inputArgs.PSObject.Properties.Name | Where-Object { $_ -notin @('snapshotId','expectedWindow','geometry','snapshotTitle','points','durationMs','accessMode','blockedApps') }).Count -gt 0) { throw 'invalid-drag' }
         if ($inputArgs.snapshotId -isnot [string] -or $inputArgs.snapshotId.Length -lt 1 -or $inputArgs.snapshotId.Length -gt 128 -or $inputArgs.snapshotTitle -isnot [string]) { throw 'invalid-drag' }
         if ($inputArgs.durationMs -isnot [int] -or $inputArgs.durationMs -lt 100 -or $inputArgs.durationMs -gt 2000 -or $inputArgs.points -isnot [array] -or $inputArgs.points.Count -lt 2 -or $inputArgs.points.Count -gt 64) { throw 'invalid-drag' }
         foreach ($field in @('x','y','width','height')) { if ($inputArgs.geometry.$field -isnot [int]) { throw 'invalid-geometry' } }

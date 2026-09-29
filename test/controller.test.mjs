@@ -15,12 +15,13 @@ function setup(t, config = {}) {
   const executor = {
     inspect: async () => ({ ok: true, window: target() }),
     foreground: async () => structuredClone(foreground),
+    listWindows: async () => ({ ok: true, windows: [target(), { ...target(), handle: '2002', processId: 456, processName: 'explorer', title: 'Select the extension directory' }] }),
     focus: async (targetWindow, options) => { calls.push({ name: 'focus', args: { expectedWindow: targetWindow }, options }); return { ok: true, window: structuredClone(targetWindow) }; },
     run: async (name, args, options) => { calls.push({ name, args, options }); return { ok: true, window: structuredClone(foreground) }; },
     recordStart: async () => ({ ok: true }),
     recordStop: async () => ({ ok: true, recording: false })
   };
-  const controller = new HostController({ configStore: { load: () => settings }, auditLog: { write: (entry) => events.push(entry) }, executor, clock: () => now });
+  const controller = new HostController({ configStore: { load: () => settings, save: (patch) => Object.assign(settings, patch) }, auditLog: { write: (entry) => events.push(entry) }, executor, clock: () => now });
   t.after(() => controller.setMode('off'));
   const command = (name, args = {}, options = {}) => ({ name, args, commandId: randomUUID(), expiresAt: now + 20_000, controlGeneration: 1, botId: 'tester-1', ...options });
   const arm = () => { controller.selectTarget(target()); controller.setMode('armed', { minutes: 5, generation: 1 }); };
@@ -44,6 +45,32 @@ test('controller starts off; target selection and an armed session are required'
   assert.equal(s.calls.at(-1).name, 'click');
   assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
   assert.equal(s.controller.getStatus().mode, 'armed');
+});
+
+test('PC access uses separate ordinary windows without per-window owner selection', async (t) => {
+  const s = setup(t, { accessMode: 'pc-access', blockedApps: [] });
+  assert.equal(s.controller.getStatus().scope.fullDesktop, true);
+  s.controller.setMode('armed', { minutes: 5, generation: 1 });
+  const first = await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: first, x: 3, y: 4 }))).ok, true);
+  s.changeWindow({ handle: '2002', processId: 456, processName: 'explorer', title: 'Select the extension directory' });
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: first, x: 3, y: 4 }))).error, 'fresh-snapshot-required');
+  const second = await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: second, x: 3, y: 4 }))).ok, true);
+  assert.equal(s.calls.at(-1).args.expectedWindow.processId, 456);
+  assert.equal((await s.controller.runCommand(s.command('focus', { windowHandle: '1001' }))).ok, false);
+});
+
+test('PC access owner blocklist rejects capture and saving a policy stops a live session', async (t) => {
+  const s = setup(t, { accessMode: 'pc-access', blockedApps: ['chrome'] });
+  s.controller.setMode('armed', { minutes: 5, generation: 1 });
+  s.changeWindow({ processName: 'chrome' });
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'app-blocked');
+  assert.equal((await s.controller.runCommand(s.command('clipboard_read'))).error, 'pc-clipboard-unavailable');
+  s.controller.setAccessPolicy({ accessMode: 'pc-access', blockedApps: ['explorer.exe'] });
+  assert.equal(s.controller.getStatus().mode, 'off');
+  assert.deepEqual(s.settings.blockedApps, ['explorer']);
+  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'stale-session');
 });
 
 test('GO LIVE defaults to an eight-hour session and caps requested sessions at twelve hours', (t) => {

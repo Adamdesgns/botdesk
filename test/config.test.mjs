@@ -24,6 +24,7 @@ const pairing = { relayUrl: 'https://relay.example.test', hostId: 'owner-pc', ho
 test('config defaults keep remote arm/startup disabled and contain no credentials', (t) => {
   const { store } = setup(t); const current = store.load();
   assert.equal(current.allowRemoteArm, false); assert.equal(current.startAtLogin, false);
+  assert.equal(current.accessMode, 'selected-window'); assert.deepEqual(current.blockedApps, []);
   assert.equal(current.hostToken, ''); assert.equal(current.ownerToken, ''); assert.equal(current.botToken, '');
 });
 
@@ -58,10 +59,20 @@ test('credential save requires encryption and validation leaves the prior file i
   assert.throws(() => new ConfigStore(file).save(pairing), /encryption unavailable/);
   assert.equal(fs.existsSync(file), false);
   store.save(pairing); const before = fs.readFileSync(file, 'utf8');
-  for (const update of [{ hostToken: 'too-short' }, { hostId: '../wrong' }, { relayUrl: 'http://public.example.test' }, { relayUrl: 'https://user:password@example.test' }, { allowedApps: 'powershell' }]) {
+  for (const update of [{ hostToken: 'too-short' }, { hostId: '../wrong' }, { relayUrl: 'http://public.example.test' }, { relayUrl: 'https://user:password@example.test' }, { allowedApps: 'powershell' }, { accessMode: 'everything' }, { blockedApps: ['../other'] }]) {
     assert.throws(() => store.save(update));
     assert.equal(fs.readFileSync(file, 'utf8'), before);
   }
+});
+
+test('PC access requires an explicit mode change and normalizes the owner blocklist', (t) => {
+  const { store, file, codec } = setup(t);
+  store.save({ ...pairing, accessMode: 'pc-access', blockedApps: [' Chrome.EXE ', 'notepad', 'chrome', 'Discord.exe'] });
+  const reloaded = new ConfigStore(file, codec);
+  assert.equal(reloaded.load().accessMode, 'pc-access');
+  assert.deepEqual(reloaded.load().blockedApps, ['chrome', 'discord', 'notepad']);
+  assert.deepEqual(reloaded.publicView().blockedApps, ['chrome', 'discord', 'notepad']);
+  assert.equal(reloaded.publicView().botToken, 'saved');
 });
 
 test('blank token fields keep previously saved secrets; host pairing does not require botToken', (t) => {

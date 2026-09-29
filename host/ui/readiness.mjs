@@ -4,7 +4,8 @@ export const SETUP_STEPS = Object.freeze(['pair', 'window', 'phone']);
 export function deriveReadiness(config = {}, status = {}) {
   const paired = Boolean(config.relayUrl && config.hostId && config.hostToken === 'saved' && config.ownerToken === 'saved');
   const connected = status.relay?.authenticated === true;
-  const selected = Boolean(status.targetWindow?.handle && Number.isInteger(status.targetWindow?.processId) && status.targetWindow.processId > 0);
+  const pcAccess = config.accessMode === 'pc-access';
+  const selected = pcAccess || Boolean(status.targetWindow?.handle && Number.isInteger(status.targetWindow?.processId) && status.targetWindow.processId > 0);
   const remoteEnabled = config.allowRemoteArm === true;
   const completed = { pair: paired && connected, window: selected, phone: paired && remoteEnabled };
   const count = Object.values(completed).filter(Boolean).length;
@@ -14,18 +15,18 @@ export function deriveReadiness(config = {}, status = {}) {
   if (status.stopLatched) next = 'Unlock the local stop on this PC before starting access.';
   else if (!paired) next = 'Save your private pairing details to connect this PC.';
   else if (!connected) next = 'Wait for the relay connection, or check the saved connection settings.';
-  else if (!selected) next = 'Choose the app window your bot should use.';
+  else if (!selected) next = 'Choose the app window your bot should use, or enable PC access.';
   else if (!remoteEnabled) next = 'Save phone access so you can start a session while away.';
   else next = 'Ready to go live or set a time window from your phone.';
   let goLiveHint;
   if (status.stopLatched) goLiveHint = 'Unlock the local stop here first.';
-  else if (!selected) goLiveHint = 'Choose a window before you go live.';
+  else if (!selected) goLiveHint = 'Choose a window or enable PC access before you go live.';
   else if (!paired) goLiveHint = 'Save this PC’s pairing details first.';
   else if (!connected) goLiveHint = 'Connect the relay before going live.';
   else goLiveHint = remoteEnabled ? 'Uses the selected session length. Pause or stop at any time.' : 'Uses the selected session length and enables phone access.';
-  return { paired, connected, selected, remoteEnabled, completed, count, nextIncomplete, connection, next, goLiveHint,
+  return { paired, connected, selected, pcAccess, remoteEnabled, completed, count, nextIncomplete, connection, next, goLiveHint,
     ready: count === SETUP_STEPS.length && !status.stopLatched,
-    labels: { pair: connection, window: selected ? 'Window selected' : 'Choose a window', phone: completed.phone ? 'Enabled and saved' : 'Phone access off' }
+    labels: { pair: connection, window: pcAccess ? 'PC access selected' : selected ? 'Window selected' : 'Choose a window', phone: completed.phone ? 'Enabled and saved' : 'Phone access off' }
   };
 }
 

@@ -48,6 +48,7 @@ const server = createServer(async (request, response) => {
       result = state;
     } else if (route === 'target' && request.method === 'POST') {
       if(body.action==='list'){state={...state,mode:'off',expiresAt:null,liveEndsAt:null,schedule:null,schedulePending:false};if(delayList)await new Promise(resolve=>{releaseList=resolve;});result={ok:true,result:{windows:candidates,expiresAt:Date.now()+60000}};}
+      else if(body.action==='policy'){assert.equal(body.accessMode,'pc-access');assert.deepEqual(body.blockedApps,['discord','steam']);state={...state,mode:'off',target:{state:'pc-access',accessMode:'pc-access',blockedApps:body.blockedApps},schedule:null,schedulePending:false,expiresAt:null,liveEndsAt:null};result={ok:true,result:{mode:'off'}};}
       else {assert.equal(body.action,'approve');assert.equal(body.candidateId,candidates[1].candidateId);assert.equal(body.temporary,true);state={...state,target:{state:'ready',window:candidates[1],temporaryUntil:Date.now()+300000}};result={ok:true,result:{mode:'off'}};}
     } else if (route === 'bot-token' && request.method === 'POST') {
       assert.deepEqual(body, {});
@@ -181,10 +182,23 @@ try {
   releaseSecret();
   await page.waitForFunction(()=>!botTokenBusy);
   assert.equal(await page.locator('#bot-token-text').textContent(),'••••••••••••••••','Late secret after STOP must stay hidden');
+  await page.locator('#pc-access-toggle').check();
+  await page.locator('#blocked-apps').fill('discord.exe, steam');
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#save-access').click();
+  await page.waitForFunction(()=>document.querySelector('#target-card').hidden===true);
+  assert.match(await page.locator('#access-detail').textContent(),/Blocked: discord, steam/);
+  assert.equal(await page.locator('[data-action="armed"]').isDisabled(),false);
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=320),'PC access controls must fit 320px');
+  await page.screenshot({path:path.resolve('evidence/phone-pc-access-320.png'),fullPage:true});
+  await page.locator('[data-action="armed"]').click();
+  await page.waitForFunction(()=>document.querySelector('#mode').textContent==='LIVE');
+  await page.locator('[data-action="off"]').click();
+  await page.waitForFunction(()=>document.querySelector('#mode').textContent==='OFF');
   const isolated = await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((window) => { const preferences = window.webContents.getLastWebPreferences(); return !window.isVisible() && preferences.sandbox && preferences.contextIsolation && !preferences.nodeIntegration; }));
   assert.equal(isolated, true);
   assert.deepEqual(pageErrors, []); assert.deepEqual(fixtureErrors, []);
-  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window', '320px-window-review', 'explicit-dialog-approval', 'temporary-five-minute-cap', 'untrusted-title-as-text', 'late-snapshot-after-stop-hidden', 'late-review-after-stop-hidden', 'owner-token-masked-by-default', 'explicit-show-and-copy', 'owner-confirmed-rotation', 'hide-clears-dom', 'late-token-after-stop-hidden'], screenshot: 'evidence/phone-schedule.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
+  const result = { ok: true, viewportWidth: 390, checks: ['no-horizontal-overflow', 'next-6am-to-6pm-defaults', 'phone-timezone-displayed', 'eight-hour-go-live', 'nested-target-image-preview', 'pause-clears-preview', 'over-12-hour-schedule-rejected', 'schedule-save-and-countdown', 'stop-cancels-schedule', 'hidden-sandboxed-window', '320px-window-review', 'explicit-dialog-approval', 'temporary-five-minute-cap', 'untrusted-title-as-text', 'late-snapshot-after-stop-hidden', 'late-review-after-stop-hidden', 'owner-token-masked-by-default', 'explicit-show-and-copy', 'owner-confirmed-rotation', 'hide-clears-dom', 'late-token-after-stop-hidden', '320px-pc-access-rules', 'pc-access-go-live-without-window'], screenshot: 'evidence/phone-pc-access-320.png', source: 'Synthetic loopback owner API; no desktop capture or production connection' };
   await fs.writeFile('evidence/phone-schedule-smoke.json', JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify(result, null, 2));
 } finally {

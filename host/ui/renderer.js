@@ -150,21 +150,22 @@ function updateClock() {
 function render(status) {
   latestStatus = status || { mode: 'off', relay: {} };
   const mode = latestStatus.mode || 'off';
+  const pcAccess = savedConfig.accessMode === 'pc-access';
   byId('sessionMinutes').disabled = ['armed', 'running'].includes(mode) || pending.has('sessionMinutes');
   byId('modeBadge').className = 'mode ' + mode;
   setText('modeBadge', mode.toUpperCase());
-  const titles = { off: 'Bot access is off', armed: 'Waiting for an approved bot', running: 'A bot is controlling this window', paused: 'Bot access is paused' };
+  const titles = { off: 'Bot access is off', armed: 'Waiting for an approved bot', running: pcAccess ? 'A bot is controlling this PC' : 'A bot is controlling this window', paused: 'Bot access is paused' };
   setText('statusTitle', titles[mode] || mode);
   setText('statusDetail', latestStatus.inputSafetyFault ? 'Mouse release could not be confirmed. Check the mouse locally, then restart BotDesk. Access remains locked off.' : latestStatus.stopLatched ? 'Local stop is locked. Unlock it here before remote arming.' : latestStatus.expiresAt ? 'Access expires ' + new Date(latestStatus.expiresAt).toLocaleTimeString() + '.' : 'Bot commands are rejected until you arm a session.');
   setText('relayState', latestStatus.relay?.authenticated ? 'Securely connected' : latestStatus.relay?.connected ? 'Authenticating' : 'Offline');
   setText('hostState', latestStatus.hostId || 'Not configured');
-  setText('recordingState', latestStatus.recording ? 'Recording selected window' : 'Stopped');
+  setText('recordingState', latestStatus.recording ? 'Recording selected window' : pcAccess ? 'Unavailable in PC access' : 'Stopped');
   byId('unlockButton').hidden = !latestStatus.stopLatched;
   byId('unlockButton').disabled = Boolean(latestStatus.inputSafetyFault);
   const target = latestStatus.targetWindow;
-  setText('selectedWindowName', target ? target.title + ' · ' + target.processName : latestStatus.targetHealth?.state==='reselect-required' ? 'RESELECT REQUIRED' : 'No window selected');
+  setText('selectedWindowName', pcAccess ? 'PC access · unblocked apps' : target ? target.title + ' · ' + target.processName : latestStatus.targetHealth?.state==='reselect-required' ? 'RESELECT REQUIRED' : 'No window selected');
   setText('targetDetail', target ? 'Selected: ' + target.title + ' (' + target.processName + '). BotDesk checks this window before every action.' : 'Choose an app window before arming. Only that window is captured and controlled.');
-  setText('botActivity', mode === 'running' ? 'An approved bot is acting in the selected window.' : mode === 'armed' ? 'Waiting for an approved bot to request an action.' : 'Bot commands are not enabled.');
+  setText('botActivity', mode === 'running' ? pcAccess ? 'An approved bot is acting in an unblocked app.' : 'An approved bot is acting in the selected window.' : mode === 'armed' ? 'Waiting for an approved bot to request an action.' : 'Bot commands are not enabled.');
   renderReadiness();
   updateClock();
 }
@@ -173,11 +174,15 @@ async function load({ fillForm = true } = {}) {
   if (!state?.config || !state?.status) throw new Error('Could not read this PC’s current setup.');
   savedConfig = { ...state.config };
   byId('studioAccess').checked = (savedConfig.allowedApps || []).includes('robloxstudiobeta');
+  byId('selectedWindowControls').hidden = savedConfig.accessMode === 'pc-access';
+  setText('windowScopeSummary', savedConfig.accessMode === 'pc-access' ? 'PC access · unblocked ordinary apps' : 'One selected window');
   if (fillForm) {
     for (const id of fields) byId(id).value = savedConfig[id] || '';
     byId('allowedApps').value = (savedConfig.allowedApps || []).join(', ');
     byId('remoteArm').checked = savedConfig.allowRemoteArm === true;
     byId('startAtLogin').checked = savedConfig.startAtLogin === true;
+    byId('pcAccess').checked = savedConfig.accessMode === 'pc-access';
+    byId('blockedApps').value = (savedConfig.blockedApps || []).join(', ');
   }
   render(state.status);
   if (!initialStepChosen) {
@@ -217,6 +222,20 @@ byId('copyOwnerLink').onclick = async () => {
   if (await action(() => window.botdesk.copyOwnerLink(), { ids: ['copyOwnerLink'], label: 'COPYING…', section: 'copy' })) notice('Private phone link copied. Keep it for your own phone.', 'copy', 'success');
 };
 byId('openCaptures').onclick = () => action(() => window.botdesk.openCaptures(), { ids: ['openCaptures'], label: 'OPENING…' });
+byId('saveAccessPolicy').onclick = async () => {
+  const accessMode = byId('pcAccess').checked ? 'pc-access' : 'selected-window';
+  const blockedApps = [...new Set(byId('blockedApps').value.split(',').map((name) => name.trim().toLowerCase().replace(/\.exe$/, '')).filter(Boolean))];
+  if (blockedApps.length > 64 || blockedApps.some((name) => !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(name))) {
+    notice('Use up to 64 executable names separated by commas.', 'window', 'error');
+    return;
+  }
+  if (accessMode === 'pc-access' && !window.confirm('Allow the bot to use any unblocked ordinary app while GO LIVE is on? Saving stops the current session.')) return;
+  const result = await action(() => window.botdesk.setAccessPolicy({ accessMode, blockedApps }), { ids: ['saveAccessPolicy', 'pcAccess', 'blockedApps'], label: 'SAVING…', section: 'window' });
+  if (result) {
+    notice('Access rules saved. Bot access is OFF. Go live separately when ready.', 'window', 'success');
+    await refreshState();
+  }
+};
 byId('studioAccess').onchange = async () => {
   const enabled = byId('studioAccess').checked;
   const result = await action(() => window.botdesk.setStudioAccess(enabled), { ids: ['studioAccess', 'targetWindow', 'refreshWindows'], section: 'window' });

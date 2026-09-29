@@ -6,7 +6,7 @@ const source=fs.readFileSync(new URL('../relay/src/dashboard.ts',import.meta.url
 function render(state){
   const nodes=new Map();
   const context=vm.createContext({Date,Intl,state,document:{querySelector(selector){if(!nodes.has(selector))nodes.set(selector,{textContent:'',value:'',disabled:false});return nodes.get(selector);}},clearScreen(){}});
-  vm.runInContext('let current=null,syncedSchedule=false;const hasToken=true,controlBusy=false,previewBusy=false,scheduleBusy=false,targetBusy=false,botTokenBusy=false;function clearBotToken(){};'+source.match(/^function (?:alertMessage|localDateValue|countdown|render|renderTarget)\(.*$/gm).join('\n')+';render(state);',context);
+  vm.runInContext('let current=null,syncedSchedule=false,policySynced=false,policyBusy=false;const hasToken=true,controlBusy=false,previewBusy=false,scheduleBusy=false,targetBusy=false,botTokenBusy=false;function clearBotToken(){};'+source.match(/^function (?:alertMessage|localDateValue|countdown|render|renderTarget)\(.*$/gm).join('\n')+';render(state);',context);
   return nodes;
 }
 test('online failed activation is BLOCKED and never claims waiting for a connection',()=>{
@@ -20,8 +20,16 @@ test('online failed activation is BLOCKED and never claims waiting for a connect
 test('pending connection, pending activation, future schedule and live remain distinct',()=>{
   const base={mode:'off',schedulePending:true,schedule:{startsAt:Date.now()-1000,endsAt:Date.now()+60000}};
   assert.equal(render({...base,hostOnline:false}).get('#countdown').textContent,'Waiting for the PC to connect');
-  assert.equal(render({...base,hostOnline:true}).get('#countdown').textContent,'Waiting for the PC to activate the selected window');
+  assert.equal(render({...base,hostOnline:true}).get('#countdown').textContent,'Waiting for the PC to activate access');
   assert.match(render({...base,schedule:{startsAt:Date.now()+60000,endsAt:Date.now()+120000}}).get('#countdown').textContent,/^Starts in /);
   const live=render({mode:'armed',hostOnline:true,liveEndsAt:Date.now()+60000});
   assert.equal(live.get('#mode').textContent,'LIVE');assert.match(live.get('#countdown').textContent,/^Live for /);
+});
+test('PC access shows blocklist, hides window picker, and permits GO LIVE without a selected window',()=>{
+  const nodes=render({mode:'off',hostOnline:true,target:{state:'pc-access',accessMode:'pc-access',blockedApps:['discord','steam']}});
+  assert.equal(nodes.get('#target-card').hidden,true);
+  assert.equal(nodes.get('#pc-access-toggle').checked,true);
+  assert.equal(nodes.get('#blocked-apps').value,'discord, steam');
+  assert.match(nodes.get('#access-detail').textContent,/Blocked: discord, steam/);
+  assert.equal(nodes.get('[data-action="armed"]').disabled,false);
 });

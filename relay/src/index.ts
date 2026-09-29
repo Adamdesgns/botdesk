@@ -248,16 +248,20 @@ export class BotDeskSession extends DurableObject<Env> {
   }
   async ownerTarget(token: string, body: RecordValue, requestId: string): Promise<Response> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
-    if (!['list', 'approve'].includes(String(body.action)) ||
-      (body.action === 'approve' && (typeof body.candidateId !== 'string' || !REQUEST_ID.test(body.candidateId) || typeof body.temporary !== 'boolean')))
+    if (!['list', 'approve', 'policy'].includes(String(body.action)) ||
+      (body.action === 'approve' && (typeof body.candidateId !== 'string' || !REQUEST_ID.test(body.candidateId) || typeof body.temporary !== 'boolean')) ||
+      (body.action === 'policy' && (!['selected-window', 'pc-access'].includes(String(body.accessMode)) ||
+        !Array.isArray(body.blockedApps) || body.blockedApps.length > 64 ||
+        body.blockedApps.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(name)))))
       return json({ error: 'invalid-target-action' }, 400);
     const replay = this.reserveId(requestId); if (replay) return replay;
     if (!this.host) return json({ error: 'host-offline' }, 503);
     if (body.action !== 'list' && (this.pending || this.ownerTransition !== null)) return json({ error: 'host-busy' }, 409);
-    if (body.action === 'list') {
+    if (body.action === 'list' || body.action === 'policy') {
       // Stop first, clear any schedule, then enumerate metadata only. Approval
       // never arms access; the owner's next GO LIVE is a separate decision.
-      this.forceOff('owner-selecting-target'); this.sendSafetyOff('owner-selecting-target');
+      this.forceOff(body.action === 'policy' ? 'owner-changing-access' : 'owner-selecting-target');
+      this.sendSafetyOff(body.action === 'policy' ? 'owner-changing-access' : 'owner-selecting-target');
       const generation = this.generation; this.ownerTransition = generation;
       try { await this.replaceSchedule(null); }
       finally { if (this.ownerTransition === generation) this.ownerTransition = null; }
@@ -265,7 +269,8 @@ export class BotDeskSession extends DurableObject<Env> {
     } else if (this.state.mode !== 'off' || this.schedule) return json({ error: 'stop-before-selecting' }, 409);
     const commandId = crypto.randomUUID();
     return this.sendAndWait('command', { type: 'owner_target', commandId,
-      args: { action: body.action, candidateId: body.candidateId, temporary: body.temporary },
+      args: { action: body.action, candidateId: body.candidateId, temporary: body.temporary,
+        accessMode: body.accessMode, blockedApps: body.blockedApps },
       expiresAt: Date.now() + COMMAND_TIMEOUT }, commandId);
   }
   async ownerBotToken(token: string, requestId: string): Promise<Response> {
@@ -301,7 +306,7 @@ export class BotDeskSession extends DurableObject<Env> {
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      relayContractVersion: '1.3.0' };
+      relayContractVersion: '1.4.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);
@@ -352,11 +357,13 @@ export class BotDeskSession extends DurableObject<Env> {
     if (!isRecord(message)) return this.disconnectHost(socket, 'invalid-host-message');
     if (message.type === 'target_status') {
       const t = message.target;
-      if (!isRecord(t) || !['missing', 'ready', 'reselect-required'].includes(String(t.state))) return;
+      if (!isRecord(t) || !['missing', 'ready', 'reselect-required', 'pc-access'].includes(String(t.state))) return;
       const w = isRecord(t.window) ? t.window : null;
       this.target = { state: t.state, checkedAt: typeof t.checkedAt === 'number' ? t.checkedAt : null,
         reason: typeof t.reason === 'string' ? t.reason.slice(0, 160) : null,
         temporaryUntil: typeof t.temporaryUntil === 'number' ? t.temporaryUntil : null,
+        accessMode: t.accessMode === 'pc-access' ? 'pc-access' : 'selected-window',
+        blockedApps: Array.isArray(t.blockedApps) ? t.blockedApps.filter(name => typeof name === 'string' && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(name)).slice(0, 64) : [],
         window: w ? { title: String(w.title || '').slice(0, 1024), processName: String(w.processName || '').slice(0, 80),
           processId: w.processId, handle: String(w.handle || '').slice(0, 20) } : null };
       return;

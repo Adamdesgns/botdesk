@@ -8,7 +8,7 @@ import {DesktopExecutor} from './executor.mjs';
 import {RelayClient} from './relay-client.mjs';
 import {RecordingService} from './recording.mjs';
 import {listWindows,focus} from './windows.mjs';
-import {isAllowedWindow} from './guard.mjs';
+import {isAllowedWindow,classifyPcWindow} from './guard.mjs';
 import {ownerBotToken,createOwnerBotToken} from './owner-secret.mjs';
 const dir=path.dirname(fileURLToPath(import.meta.url));
 let mainWindow,overlayWindow,controller,configStore,recorder,tray,quitting=false;
@@ -49,12 +49,18 @@ function handle(name,fn,{allowOverlay=false}={}){
 }
 function installIpc(){
   handle('get-state',async()=>{if(!controller.operation)await controller.revalidateTarget();return {status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()};});
-  handle('windows',async()=>{const result=await listWindows();
-    choices=(result.windows||[]).filter(w=>isAllowedWindow(w,configStore.load().allowedApps));
+  handle('windows',async()=>{const config=configStore.load();const result=await listWindows({accessMode:config.accessMode,blockedApps:config.blockedApps});
+    choices=(result.windows||[]).filter(w=>config.accessMode==='pc-access'?classifyPcWindow(w,config.blockedApps).allowed:isAllowedWindow(w,config.allowedApps));
     return {ok:result.ok,windows:choices,error:result.error};});
   handle('select-window',async handle=>{
+    if(configStore.load().accessMode==='pc-access')throw new Error('PC access does not require a selected window.');
     const target=choices.find(w=>w.handle===handle&&isAllowedWindow(w,configStore.load().allowedApps));if(!target)throw new Error('Refresh and choose an available window.');
     controller.selectTarget(target);const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);return {ok:true,status:controller.getStatus()};
+  });
+  handle('set-access-policy',input=>{
+    const status=controller.setAccessPolicy(input||{});
+    choices=[];
+    return {ok:true,status,config:configStore.publicView()};
   });
   handle('set-mode',async input=>{
     if(input?.mode==='off')return {ok:true,status:controller.emergencyStop('local-button')};
@@ -64,12 +70,15 @@ function installIpc(){
       return {ok:true,status};
     }
     if(input?.mode!=='armed')throw new Error('invalid-mode');
-    if(!controller.targetWindow)throw new Error('Choose a window first.');
+    const pcAccess=configStore.load().accessMode==='pc-access';
+    if(!controller.targetWindow&&!pcAccess)throw new Error('Choose a window first.');
     if(controller.stopLatched)throw new Error('Unlock the local stop first.');
     const epoch=controller.epoch;
-    const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);
-    const focused=await focus({expectedWindow:controller.targetWindow});
-    if(!focused.ok)throw new Error(focused.error);
+    if(!pcAccess){
+      const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);
+      const focused=await focus({expectedWindow:controller.targetWindow});
+      if(!focused.ok)throw new Error(focused.error);
+    }
     if(epoch!==controller.epoch)throw new Error('Arming was cancelled.');
     configStore.save({allowRemoteArm:true});
     send('status',controller.getStatus());
