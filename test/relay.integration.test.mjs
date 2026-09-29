@@ -181,7 +181,7 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
   assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
   const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
-  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.4.0');
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.5.0');
   assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
   const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
   assert.equal((await command(c,'screenshot')).status,200);

@@ -39,7 +39,7 @@ export class HostController extends EventEmitter {
       targetHealth:this.targetHealth, targetDeadline:this.targetDeadline,
       allowRemoteArm:Boolean(config.allowRemoteArm), hostId:config.hostId||null,
       contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:config.accessMode==='pc-access',clipboard:config.accessMode!=='pc-access'},
-      scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:config.accessMode==='pc-access', blockedApps:config.blockedApps}};
+      scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:config.accessMode==='pc-access', editingAllowed:config.accessMode!=='pc-access', blockedApps:config.blockedApps}};
   }
   selectTarget(window, {temporary=false,notify=true}={}) {
     this.setMode('off', {source:'target-changed',notify}); this.targetWindow=window ? structuredClone(window) : null;
@@ -136,8 +136,8 @@ export class HostController extends EventEmitter {
     const pcAccess=access.accessMode==='pc-access';
     if(name==='status' || name==='capabilities') return {ok:true,result:name==='capabilities'?{
       contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:pcAccess,clipboard:!pcAccess}, mode:this.mode, expiresAt:this.expiresAt,
-      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, blockedApps:access.blockedApps},
-      limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.']
+      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, editingAllowed:!pcAccess, blockedApps:access.blockedApps},
+      limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.',...(pcAccess?['PC access permits viewing, switching, scrolling, and closing windows only.']:[])]
     }:this.getStatus()};
     if(name==='stop_all') {this.setMode('off',{source:'bot-stop'});return {ok:true,result:this.getStatus()};}
     if(name==='record_stop') {if(this.operationName==='record_start')this.operation?.abort();return {ok:true,result:await this.stopRecording()};}

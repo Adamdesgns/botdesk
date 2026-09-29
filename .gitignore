@@ -1,5 +1,6 @@
 node_modules/
 dist/
+dist-safeview/
 .env
 .dev.vars
 worker-configuration.d.ts

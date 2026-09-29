@@ -306,7 +306,7 @@ export class BotDeskSession extends DurableObject<Env> {
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      relayContractVersion: '1.4.0' };
+      relayContractVersion: '1.5.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);

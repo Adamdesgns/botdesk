@@ -2,6 +2,8 @@
 
 BotDesk is remote control software for an owner-authorized Windows session. Its app and sensitive-window checks reduce accidental access; they are not a Windows security sandbox or a guarantee against an untrusted bot.
 
+In the local 1.5 PC-wide viewing build, click, drag, type, clipboard and editing keys are rejected by both the host guard and native helper. The bot may inspect, focus, scroll and close ordinary windows. Closing can discard unsaved work, so this is not a guarantee that no data can be lost. The deployed 1.4 host has not been replaced by this local build.
+
 ## Owner authority
 
 Host, owner, bot and provisioning credentials are separate. A bot credential cannot arm the host, change a schedule or obtain an owner credential. Keep the owner dashboard link and pairing file private. The owner's URL fragment is read by the dashboard and used in authenticated API calls; it is not a query-string token. HTTPS is required except for explicit local loopback development.

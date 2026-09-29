@@ -47,16 +47,16 @@ test('controller starts off; target selection and an armed session are required'
   assert.equal(s.controller.getStatus().mode, 'armed');
 });
 
-test('PC access uses separate ordinary windows without per-window owner selection', async (t) => {
+test('PC viewing crosses ordinary windows while editing stays blocked', async (t) => {
   const s = setup(t, { accessMode: 'pc-access', blockedApps: [] });
   assert.equal(s.controller.getStatus().scope.fullDesktop, true);
   s.controller.setMode('armed', { minutes: 5, generation: 1 });
   const first = await s.capture();
-  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: first, x: 3, y: 4 }))).ok, true);
+  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: first, x: 3, y: 4 }))).error, 'pc-editing-blocked');
   s.changeWindow({ handle: '2002', processId: 456, processName: 'explorer', title: 'Select the extension directory' });
-  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: first, x: 3, y: 4 }))).error, 'fresh-snapshot-required');
+  assert.equal((await s.controller.runCommand(s.command('move', { snapshotId: first, x: 3, y: 4 }))).error, 'window-moved-retake-snapshot');
   const second = await s.capture();
-  assert.equal((await s.controller.runCommand(s.command('click', { snapshotId: second, x: 3, y: 4 }))).ok, true);
+  assert.equal((await s.controller.runCommand(s.command('move', { snapshotId: second, x: 3, y: 4 }))).ok, true);
   assert.equal(s.calls.at(-1).args.expectedWindow.processId, 456);
   assert.equal((await s.controller.runCommand(s.command('focus', { windowHandle: '1001' }))).ok, false);
 });

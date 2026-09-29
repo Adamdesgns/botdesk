@@ -67,9 +67,9 @@ public static class BotDeskNative {
     }
     PcAccess=mode=="pc-access"; BlockedApps=next;
   }
-  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
+  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","ALT+F4","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
-    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"ARROWLEFT",0x25},{"ARROWRIGHT",0x27},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
+    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F4",0x73},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
   };
   sealed class GuardFailure : Exception {
     public GuardFailure(string reason) : base(reason) { }
@@ -279,6 +279,7 @@ public static class BotDeskNative {
     if(element==null || element.Current.ProcessId!=(int)pid || element.Current.IsPassword) throw Block("point-control-blocked");
   }
   public static void Click(string handle,uint pid,int x,int y,string button,int count) {
+    if(PcAccess) throw Block("pc-editing-blocked");
     IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
     if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
@@ -386,6 +387,7 @@ public static class BotDeskNative {
     canContinue();
   }
   public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
+    if(PcAccess) throw Block("pc-editing-blocked");
     if(DragTimingEnabled) DragTimingClock=Stopwatch.StartNew();
     if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
     for(int i=0;i<xs.Length;i++) {
@@ -446,6 +448,7 @@ public static class BotDeskNative {
     }
   }
   public static void TypeText(string handle,uint pid,string text) {
+    if(PcAccess) throw Block("pc-editing-blocked");
     if(String.IsNullOrEmpty(text) || text.Length>4000 || Regex.IsMatch(text,@"[\x00-\x1f\x7f]|(?:javascript|vbscript|data|file|shell|ms-settings|powershell):",RegexOptions.IgnoreCase)) throw Block("invalid-text");
     Check(handle,pid,true); ModifiersReleased();
     foreach(char value in text) {
@@ -457,6 +460,7 @@ public static class BotDeskNative {
   }
   public static void Press(string handle,uint pid,string chord) {
     if(!SafeKeys.Contains(chord??"")) throw Block("key-blocked");
+    if(PcAccess ? !String.Equals(chord,"ALT+F4",StringComparison.OrdinalIgnoreCase) : String.Equals(chord,"ALT+F4",StringComparison.OrdinalIgnoreCase)) throw Block("pc-editing-blocked");
     Check(handle,pid,true); ModifiersReleased();
     var parts=chord.Split('+'); var items=new List<INPUT>();
     foreach(string part in parts) { INPUT down=new INPUT(); down.type=1; down.U.ki.wVk=Keys[part]; items.Add(down); }
@@ -524,7 +528,11 @@ try {
   $inputArgs = $request.args
   if ($action -ne 'release_left' -and $action -notin @('foreground', 'list_monitors', 'clipboard_read', 'clipboard_write')) {
     $accessMode = if ($null -eq $inputArgs.accessMode) { 'selected-window' } else { [string]$inputArgs.accessMode }
-    $blockedApps = if ($null -eq $inputArgs.blockedApps) { @() } else { @($inputArgs.blockedApps) }
+    $blockedApps = @()
+    if ($null -ne $inputArgs.blockedApps) {
+      if ($inputArgs.blockedApps -isnot [array] -or @($inputArgs.blockedApps | Where-Object { $_ -isnot [string] }).Count -gt 0) { throw 'invalid-blocked-apps' }
+      $blockedApps = [string[]]$inputArgs.blockedApps
+    }
     [BotDeskNative]::SetPolicy($accessMode,[string[]]$blockedApps)
   }
   if ($action -eq 'release_left') {
@@ -535,6 +543,7 @@ try {
     elseif ($action -eq 'list_monitors') { $result = [BotDeskNative]::Monitors() }
     else { $result = [BotDeskNative]::ClipboardRead() }
   } elseif ($action -eq 'clipboard_write') {
+    if ([string]$inputArgs.accessMode -eq 'pc-access') { throw 'pc-editing-blocked' }
     if ($inputArgs.text -isnot [string]) { throw 'invalid-clipboard-text' }
     [BotDeskNative]::ClipboardWrite([string]$inputArgs.text); $result = @{ ok = $true }
   } else {

@@ -66,6 +66,19 @@ test('native C# compiles on Windows without observing or controlling any apps', 
   assert.deepEqual(JSON.parse(output),{ok:true,compiled:true});
 });
 
+test('native PC policy rejects editing before resolving any real window', {skip:process.platform!=='win32',timeout:30000}, () => {
+  const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+  const executable=path.join(process.env.SystemRoot || 'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+  const expectedWindow={handle:'100',processId:23};
+  for (const [action, extras] of [
+    ['click',{x:1,y:1,button:'left',count:1}],['type',{text:'erase'}],['key',{key:'DELETE'}]
+  ]) {
+    const input=JSON.stringify({action,args:{accessMode:'pc-access',blockedApps:[],expectedWindow,...extras}})+'\n';
+    const output=execFileSync(executable,['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(root,'scripts/windows-helper.ps1')],{input,encoding:'utf8',timeout:25000,windowsHide:true});
+    assert.deepEqual(JSON.parse(output),{ok:false,error:'pc-editing-blocked'},action);
+  }
+});
+
 test('native helper source includes JPEG large-window capture, monitors, clipboard and E/WASD keys', () => {
   const source = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'scripts/windows-helper.ps1'), 'utf8');
   assert.match(source, /useJpeg/);

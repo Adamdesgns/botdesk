@@ -1,5 +1,7 @@
 # BotDoor emergency PC scope — 2026-09-29
 
+**Updated direction:** Adam later required that the bot not erase anything and allowed closing windows. The local 1.5 build narrows PC-wide access to viewing, switching, scrolling and closing; the earlier editing acceptance below is superseded. See [PC-VIEWING-NO-DELETE-2026-09-29.md](PC-VIEWING-NO-DELETE-2026-09-29.md). Closing can still discard unsaved work, so this is not a deletion-proof guarantee.
+
 Adam's requested behavior: after the current KEORIS Claude test, BotDoor should let Morgan operate ordinary windows across this PC without asking Adam to select each one. Adam chooses apps to block instead. The current selected-window grant cannot do this: the owner page, host controller, MCP contract, and native Windows helper all enforce one HWND and a small app allowlist.
 
 ## Intended owner flow

@@ -67,6 +67,10 @@ export function validateCommand(name, args = {}, context = {}) {
   const target = context.targetWindow;
   const foreground = context.foreground || {};
   const pcAccess = context.accessMode === 'pc-access';
+  if (pcAccess && (['click', 'drag', 'type', 'clipboard_write'].includes(name) ||
+    (name === 'key' && String(args.key || '').toUpperCase() !== 'ALT+F4'))) {
+    return reject('pc-editing-blocked', 'PC access permits viewing, switching, scrolling and closing windows only.');
+  }
   if (pcAccess) {
     if (name === 'list_windows') return { allowed: true };
     if (name === 'clipboard_read' || name === 'clipboard_write') return reject('pc-clipboard-unavailable', 'Clipboard access is unavailable in PC access mode.');
@@ -113,7 +117,8 @@ export function validateCommand(name, args = {}, context = {}) {
     }
   }
   if (name === 'type' && (typeof args.text !== 'string' || args.text.length < 1 || args.text.length > 4000 || /[\u0000-\u001f\u007f]/.test(args.text) || /(?:javascript|vbscript|data|file|shell|ms-settings|powershell):/i.test(args.text))) return reject('bad-arguments', 'Text must be plain printable text, up to 4,000 characters.');
-  if (name === 'key' && !SAFE_KEYS.has(String(args.key || '').toUpperCase())) return reject('key-blocked', 'That shortcut is not permitted.');
+  if (name === 'key' && !(pcAccess && String(args.key || '').toUpperCase() === 'ALT+F4') &&
+    !SAFE_KEYS.has(String(args.key || '').toUpperCase())) return reject('key-blocked', 'That shortcut is not permitted.');
   if (name === 'scroll') {
     const hasY = Number.isInteger(args.deltaY);
     const hasX = Number.isInteger(args.deltaX);

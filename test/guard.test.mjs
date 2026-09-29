@@ -57,7 +57,15 @@ test('PC access follows the owner blocklist across ordinary windows without one 
   const explorer = { ...window, handle: '200', processId: 44, processName: 'explorer', title: 'Select the extension directory' };
   const pc = { ...context(), accessMode: 'pc-access', targetWindow: null, foreground: explorer, blockedApps: ['chrome'] };
   assert.equal(validateCommand('screenshot', {}, pc).allowed, true);
-  assert.equal(validateCommand('click', { x: 5, y: 5 }, pc).allowed, true);
+  assert.equal(validateCommand('click', { x: 5, y: 5 }, pc).category, 'pc-editing-blocked');
+  assert.equal(validateCommand('move', { x: 5, y: 5 }, pc).allowed, true);
+  assert.equal(validateCommand('scroll', { deltaY: 100 }, pc).allowed, true);
+  assert.equal(validateCommand('key', { key: 'ALT+F4' }, pc).allowed, true);
+  for (const [name, args] of [
+    ['type', { text: 'replace this' }], ['drag', {}], ['clipboard_write', { text: 'replace this' }],
+    ['key', { key: 'DELETE' }], ['key', { key: 'BACKSPACE' }], ['key', { key: 'CTRL+X' }],
+    ['key', { key: 'CTRL+V' }], ['key', { key: 'ENTER' }]
+  ]) assert.equal(validateCommand(name, args, pc).category, 'pc-editing-blocked', name);
   assert.equal(validateCommand('list_windows', {}, { ...pc, foreground: { ...explorer, title: 'Sign in' } }).allowed, true);
   assert.equal(validateCommand('focus', {}, { ...pc, targetWindow: explorer }).allowed, true);
   assert.equal(validateCommand('focus', {}, { ...pc, targetWindow: { ...explorer, processName: 'chrome' } }).category, 'app-blocked');
