@@ -5,7 +5,7 @@ import { CONTRACT_VERSION } from '../shared/errors.mjs';
 import { validateCommand, isAllowedWindow, classifyPcWindow } from './guard.mjs';
 import { TargetRecovery, sameTarget, TEMPORARY_TARGET_MS } from './target-recovery.mjs';
 import { normalizeBlockedApps } from './config-store.mjs';
-const INPUT = new Set(['click', 'move', 'type', 'key', 'scroll', 'drag']);
+const INPUT = new Set(['click', 'move', 'type', 'key', 'scroll', 'drag', 'move_window', 'close_window']);
 const READ = new Set(['screenshot', 'snapshot']);
 const fail = (error, message = error) => ({ok:false, error, message});
 
@@ -38,7 +38,7 @@ export class HostController extends EventEmitter {
       relay:this.relayStatus, stopLatched:this.stopLatched, inputSafetyFault:this.inputSafetyFault, targetWindow:this.targetWindow,
       targetHealth:this.targetHealth, targetDeadline:this.targetDeadline,
       allowRemoteArm:Boolean(config.allowRemoteArm), hostId:config.hostId||null,
-      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:config.accessMode==='pc-access',clipboard:config.accessMode!=='pc-access'},
+      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:config.accessMode==='pc-access',clipboard:config.accessMode!=='pc-access',launchApplications:config.accessMode==='pc-access'},
       scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:config.accessMode==='pc-access', editingAllowed:config.accessMode!=='pc-access', blockedApps:config.blockedApps}};
   }
   selectTarget(window, {temporary=false,notify=true}={}) {
@@ -135,9 +135,9 @@ export class HostController extends EventEmitter {
     const access=this.configStore.load();
     const pcAccess=access.accessMode==='pc-access';
     if(name==='status' || name==='capabilities') return {ok:true,result:name==='capabilities'?{
-      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:pcAccess,clipboard:!pcAccess}, mode:this.mode, expiresAt:this.expiresAt,
+      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:pcAccess,clipboard:!pcAccess,launchApplications:pcAccess}, mode:this.mode, expiresAt:this.expiresAt,
       scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, editingAllowed:!pcAccess, blockedApps:access.blockedApps},
-      limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.',...(pcAccess?['PC access permits viewing, switching, scrolling, and closing windows only.']:[])]
+      limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.',...(pcAccess?['PC access permits pointer movement, viewing, scrolling, moving and closing ordinary windows, and launching an existing local executable by exact path. Editing controls remain blocked.']:[])]
     }:this.getStatus()};
     if(name==='stop_all') {this.setMode('off',{source:'bot-stop'});return {ok:true,result:this.getStatus()};}
     if(name==='record_stop') {if(this.operationName==='record_start')this.operation?.abort();return {ok:true,result:await this.stopRecording()};}
@@ -156,12 +156,13 @@ export class HostController extends EventEmitter {
     try {
       this.getStatus();
       if(!['armed','running'].includes(this.mode))return fail('not-armed');
-      if(name==='list_monitors') {
+      if(name==='list_monitors'||name==='launch_app') {
         const verdict=validateCommand(name,args,{mode:this.mode,expiresAt:this.expiresAt,now:this.clock(),
           foreground:{},targetWindow:this.targetWindow||{handle:'0',processId:1},allowedApps:access.allowedApps,accessMode:access.accessMode,blockedApps:access.blockedApps});
         if(!verdict.allowed)return fail(verdict.category,verdict.reason);
-        const result=await this.executor.run(name,args,{signal:operation.signal});
+        const result=await this.executor.run(name,{...args,accessMode:access.accessMode,blockedApps:access.blockedApps},{signal:operation.signal});
         if(!result.ok)return fail(result.error||'command-failed',result.message||result.error);
+        if(name==='launch_app')this.auditLog.write({botId,command:name,outcome:'ok',app:args.app});
         return {ok:true,result};
       }
       if(!pcAccess){const valid=await this.revalidateTarget({signal:operation.signal});if(!valid.ok)return valid;}

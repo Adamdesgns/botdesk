@@ -26,6 +26,9 @@ export class DesktopExecutor {
       }
       case 'list_monitors': return native.listMonitors(options);
       case 'focus': return this.focus(args.expectedWindow, options);
+      case 'move_window': return native.moveWindow(args, options);
+      case 'close_window': return native.closeWindow(args, options);
+      case 'launch_app': return native.launchApp(args, options);
       case 'click': return native.click({
         ...args,
         x: args.geometry.x + args.x,

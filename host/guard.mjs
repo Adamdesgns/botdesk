@@ -67,9 +67,19 @@ export function validateCommand(name, args = {}, context = {}) {
   const target = context.targetWindow;
   const foreground = context.foreground || {};
   const pcAccess = context.accessMode === 'pc-access';
-  if (pcAccess && (['click', 'drag', 'type', 'clipboard_write'].includes(name) ||
-    (name === 'key' && String(args.key || '').toUpperCase() !== 'ALT+F4'))) {
-    return reject('pc-editing-blocked', 'PC access permits viewing, switching, scrolling and closing windows only.');
+  if (name === 'launch_app') {
+    if (!pcAccess) return reject('pc-access-required', 'Program launching requires PC access mode.');
+    if (!args || Object.keys(args).length !== 1 || typeof args.app !== 'string' || args.app.length > 1024 ||
+      !/^[a-z]:\\[^\r\n\0"<>|?*]+\.exe$/i.test(args.app) || args.app.split('\\').some(segment => segment === '..' || segment === '.'))
+      return reject('app-blocked', 'Provide an exact local .exe path, without arguments.');
+    const executable = normalizeApp(args.app.split('\\').at(-1));
+    if (context.blockedApps?.map(normalizeApp).includes(executable)) return reject('app-blocked', 'This app is blocked for PC access.');
+    return { allowed: true };
+  }
+  if ((name === 'move_window' || name === 'close_window') && !pcAccess)
+    return reject('pc-access-required', 'Window management requires PC access mode.');
+  if (pcAccess && ['click', 'drag', 'type', 'clipboard_write', 'key'].includes(name)) {
+    return reject('pc-editing-blocked', 'PC access permits pointer movement, viewing, scrolling, window management and named program launches, but no editing controls.');
   }
   if (pcAccess) {
     if (name === 'list_windows') return { allowed: true };
@@ -100,6 +110,13 @@ export function validateCommand(name, args = {}, context = {}) {
       if (!['left', 'right', 'middle'].includes(button) || ![1, 2].includes(count)) return reject('bad-arguments', 'Click button must be left|right|middle and count 1|2.');
     }
   }
+  if (name === 'move_window' && (!Number.isInteger(args.x) || !Number.isInteger(args.y) ||
+    args.x < -32768 || args.x > 32767 || args.y < -32768 || args.y > 32767))
+    return reject('bad-arguments', 'Window position must be a bounded virtual-desktop coordinate.');
+  if (name === 'move_window' && Object.keys(args).some(key => !['snapshotId', 'x', 'y'].includes(key)))
+    return reject('bad-arguments', 'Unexpected window movement argument.');
+  if (name === 'close_window' && Object.keys(args).some(key => key !== 'snapshotId'))
+    return reject('bad-arguments', 'Unexpected window close argument.');
   if (name === 'drag') {
     const g = foreground.geometry;
     const keys = args && typeof args === 'object' ? Object.keys(args) : [];
@@ -117,8 +134,7 @@ export function validateCommand(name, args = {}, context = {}) {
     }
   }
   if (name === 'type' && (typeof args.text !== 'string' || args.text.length < 1 || args.text.length > 4000 || /[\u0000-\u001f\u007f]/.test(args.text) || /(?:javascript|vbscript|data|file|shell|ms-settings|powershell):/i.test(args.text))) return reject('bad-arguments', 'Text must be plain printable text, up to 4,000 characters.');
-  if (name === 'key' && !(pcAccess && String(args.key || '').toUpperCase() === 'ALT+F4') &&
-    !SAFE_KEYS.has(String(args.key || '').toUpperCase())) return reject('key-blocked', 'That shortcut is not permitted.');
+  if (name === 'key' && !SAFE_KEYS.has(String(args.key || '').toUpperCase())) return reject('key-blocked', 'That shortcut is not permitted.');
   if (name === 'scroll') {
     const hasY = Number.isInteger(args.deltaY);
     const hasX = Number.isInteger(args.deltaX);

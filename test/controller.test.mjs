@@ -73,6 +73,22 @@ test('PC access owner blocklist rejects capture and saving a policy stops a live
   assert.equal((await s.controller.runCommand(s.command('screenshot'))).error, 'stale-session');
 });
 
+test('PC window movement and closing require a fresh matching capture; app launch is named and armed', async (t) => {
+  const s=setup(t,{accessMode:'pc-access',blockedApps:['chrome']});
+  assert.equal((await s.controller.runCommand(s.command('launch_app',{app:'C:\\Windows\\System32\\notepad.exe'}))).error,'stale-session');
+  s.controller.setMode('armed',{minutes:5,generation:1});
+  assert.equal((await s.controller.runCommand(s.command('launch_app',{app:'C:\\Windows\\System32\\notepad.exe'}))).ok,true);
+  assert.equal(s.calls.at(-1).name,'launch_app');
+  assert.equal((await s.controller.runCommand(s.command('launch_app',{app:'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'}))).error,'app-blocked');
+  const first=await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('move_window',{snapshotId:first,x:100,y:100}))).ok,true);
+  assert.equal(s.calls.at(-1).name,'move_window');
+  assert.equal((await s.controller.runCommand(s.command('close_window',{snapshotId:first}))).error,'fresh-snapshot-required');
+  const second=await s.capture();
+  assert.equal((await s.controller.runCommand(s.command('close_window',{snapshotId:second}))).ok,true);
+  assert.equal(s.calls.at(-1).name,'close_window');
+});
+
 test('GO LIVE defaults to an eight-hour session and caps requested sessions at twelve hours', (t) => {
   const s = setup(t);
   s.controller.selectTarget(target());

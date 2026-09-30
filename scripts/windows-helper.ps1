@@ -26,6 +26,8 @@ public static class BotDeskNative {
   [DllImport("user32.dll")] static extern uint SendInput(uint count,INPUT[] items,int size);
   [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hwnd);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool SetWindowPos(IntPtr hwnd,IntPtr after,int x,int y,int width,int height,uint flags);
+  [DllImport("user32.dll",SetLastError=true)] static extern bool PostMessage(IntPtr hwnd,uint message,IntPtr wParam,IntPtr lParam);
   [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT point);
   [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hwnd,uint flags);
   [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd,out RECT rect);
@@ -67,9 +69,9 @@ public static class BotDeskNative {
     }
     PcAccess=mode=="pc-access"; BlockedApps=next;
   }
-  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","ALT+F4","F5","E","W","A","S","D","SPACE" };
+  static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
-    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F4",0x73},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
+    {"ENTER",0x0D},{"TAB",0x09},{"ESCAPE",0x1B},{"BACKSPACE",0x08},{"DELETE",0x2E},{"ARROWUP",0x26},{"ARROWDOWN",0x28},{"HOME",0x24},{"END",0x23},{"PAGEUP",0x21},{"PAGEDOWN",0x22},{"F5",0x74},{"CTRL",0x11},{"ALT",0x12},{"A",0x41},{"C",0x43},{"D",0x44},{"E",0x45},{"S",0x53},{"V",0x56},{"W",0x57},{"X",0x58},{"Z",0x5A},{"SPACE",0x20},{"LEFT",0x25},{"RIGHT",0x27}
   };
   sealed class GuardFailure : Exception {
     public GuardFailure(string reason) : base(reason) { }
@@ -123,11 +125,11 @@ public static class BotDeskNative {
   public static Dictionary<string,object> Describe(IntPtr hwnd,bool automation) {
     uint pid; GetWindowThreadProcessId(hwnd,out pid);
     var title=new StringBuilder(1024); GetWindowText(hwnd,title,title.Capacity);
-    string name="",started=""; try { using(var process=Process.GetProcessById((int)pid)) { name=process.ProcessName; started=process.StartTime.ToUniversalTime().Ticks.ToString(); } } catch { }
+    string name="",started="",executablePath=""; try { using(var process=Process.GetProcessById((int)pid)) { name=process.ProcessName; started=process.StartTime.ToUniversalTime().Ticks.ToString(); try { executablePath=process.MainModule.FileName; } catch { } } } catch { }
     RECT rect; if(!GetWindowRect(hwnd,out rect)) rect=new RECT();
     var result=new Dictionary<string,object> {
       {"handle",hwnd.ToInt64().ToString()},{"processId",(int)pid},{"processName",name},{"title",title.ToString()},
-      {"processStartedAt",started},
+      {"processStartedAt",started},{"executablePath",executablePath},
       {"integrity",Integrity(pid)},{"desktop",Desktop()},{"automationChecked",false},{"passwordFocused",true},{"passwordPresent",true},
       {"geometry",new Dictionary<string,object>{{"x",rect.Left},{"y",rect.Top},{"width",rect.Right-rect.Left},{"height",rect.Bottom-rect.Top}}}
     };
@@ -209,6 +211,45 @@ public static class BotDeskNative {
     }
     if(GetForegroundWindow()!=hwnd) throw Block("focus-refused");
     Check(handle,pid,true);
+  }
+  public static Dictionary<string,object> MoveWindow(string handle,uint pid,int x,int y) {
+    if(!PcAccess) throw Block("pc-access-required");
+    IntPtr hwnd=Check(handle,pid,true);
+    RECT before; if(!GetWindowRect(hwnd,out before)) throw Block("window-geometry-unavailable");
+    bool visible=false;
+    foreach(var screen in System.Windows.Forms.Screen.AllScreens) {
+      var area=screen.WorkingArea;
+      if(x>=area.Left && y>=area.Top && x<=area.Right-100 && y<=area.Bottom-40) { visible=true; break; }
+    }
+    if(!visible) throw Block("window-position-blocked");
+    Check(handle,pid,true);
+    if(!SetWindowPos(hwnd,IntPtr.Zero,x,y,0,0,0x0001|0x0004|0x0010)) throw Block("window-move-refused");
+    Check(handle,pid,false);
+    RECT after; if(!GetWindowRect(hwnd,out after)) throw Block("window-geometry-unavailable");
+    if(after.Left!=x || after.Top!=y) throw Block("window-move-refused");
+    return new Dictionary<string,object>{{"ok",true},{"x",after.Left},{"y",after.Top},{"width",after.Right-after.Left},{"height",after.Bottom-after.Top}};
+  }
+  public static void CloseWindow(string handle,uint pid) {
+    if(!PcAccess) throw Block("pc-access-required");
+    IntPtr hwnd=Check(handle,pid,true);
+    Check(handle,pid,true);
+    if(!PostMessage(hwnd,0x0010,IntPtr.Zero,IntPtr.Zero)) throw Block("window-close-refused");
+  }
+  public static Dictionary<string,object> LaunchApp(string app) {
+    if(!PcAccess || Desktop()!="default") throw Block("pc-access-required");
+    string self=Integrity((uint)Process.GetCurrentProcess().Id);
+    if(self!="medium" && self!="low") throw Block("host-integrity-blocked");
+    if(app==null || app.Length>1024 || !Regex.IsMatch(app,@"^[a-zA-Z]:\\[^\r\n\0""<>|?*]+\.exe$",RegexOptions.IgnoreCase) || app.Split('\\').Length<2 || Array.Exists(app.Split('\\'),part=>part=="." || part=="..")) throw Block("app-blocked");
+    string executable=Path.GetFullPath(app);
+    if(BlockedApps.Contains(Path.GetFileNameWithoutExtension(executable))) throw Block("app-blocked");
+    if(!File.Exists(executable)) throw Block("app-not-installed");
+    // ShellExecuteEx detaches the GUI process from this helper's stdio pipes.
+    // FileName is an already validated .exe path; no command interpreter or arguments are supplied.
+    var start=new ProcessStartInfo(executable){UseShellExecute=true,WorkingDirectory=Path.GetDirectoryName(executable),Arguments=""};
+    try { using(var process=Process.Start(start)) { if(process==null) throw Block("app-launch-refused"); } }
+    catch(GuardFailure) { throw; }
+    catch { throw Block("app-launch-refused"); }
+    return new Dictionary<string,object>{{"ok",true},{"app",Path.GetFileName(executable)},{"started",true}};
   }
   public static Dictionary<string,object> Capture(string handle,uint pid) {
     IntPtr hwnd=Check(handle,pid,true); RECT before;
@@ -460,7 +501,7 @@ public static class BotDeskNative {
   }
   public static void Press(string handle,uint pid,string chord) {
     if(!SafeKeys.Contains(chord??"")) throw Block("key-blocked");
-    if(PcAccess ? !String.Equals(chord,"ALT+F4",StringComparison.OrdinalIgnoreCase) : String.Equals(chord,"ALT+F4",StringComparison.OrdinalIgnoreCase)) throw Block("pc-editing-blocked");
+    if(PcAccess) throw Block("pc-editing-blocked");
     Check(handle,pid,true); ModifiersReleased();
     var parts=chord.Split('+'); var items=new List<INPUT>();
     foreach(string part in parts) { INPUT down=new INPUT(); down.type=1; down.U.ki.wVk=Keys[part]; items.Add(down); }
@@ -542,6 +583,9 @@ try {
     elseif ($action -eq 'list_windows') { $result = @{ ok = $true; windows = @([BotDeskNative]::Windows()) } }
     elseif ($action -eq 'list_monitors') { $result = [BotDeskNative]::Monitors() }
     else { $result = [BotDeskNative]::ClipboardRead() }
+  } elseif ($action -eq 'launch_app') {
+    if ($inputArgs.app -isnot [string]) { throw 'app-blocked' }
+    $result = [BotDeskNative]::LaunchApp([string]$inputArgs.app)
   } elseif ($action -eq 'clipboard_write') {
     if ([string]$inputArgs.accessMode -eq 'pc-access') { throw 'pc-editing-blocked' }
     if ($inputArgs.text -isnot [string]) { throw 'invalid-clipboard-text' }
@@ -554,6 +598,11 @@ try {
     switch ($action) {
       'inspect' { $result = @{ ok = $true; window = [BotDeskNative]::Inspect($targetHandle,$targetPid) } }
       'focus' { [BotDeskNative]::Focus($targetHandle,$targetPid); $result = @{ ok = $true } }
+      'move_window' {
+        if ($inputArgs.x -isnot [int] -or $inputArgs.y -isnot [int]) { throw 'invalid-position' }
+        $result = [BotDeskNative]::MoveWindow($targetHandle,$targetPid,$inputArgs.x,$inputArgs.y)
+      }
+      'close_window' { [BotDeskNative]::CloseWindow($targetHandle,$targetPid); $result = @{ ok = $true; requested = $true } }
       'capture' { $result = [BotDeskNative]::Capture($targetHandle,$targetPid) }
       'snapshot' { $result = [BotDeskNative]::Snapshot($targetHandle,$targetPid) }
       'click' {

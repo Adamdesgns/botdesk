@@ -13,6 +13,9 @@ export const COMMANDS = Object.freeze([
   'list_windows',
   'list_monitors',
   'focus',
+  'move_window',
+  'close_window',
+  'launch_app',
   'click',
   'move',
   'drag',
@@ -36,7 +39,7 @@ export const CAPABILITY_FLAGS = Object.freeze({
   clipboard: true,
   fileOperations: false,
   terminalExecution: false,
-  launchApplications: false,
+  launchApplications: true,
   multiMonitorCapture: false,
   uacBypass: false
 });

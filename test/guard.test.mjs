@@ -60,7 +60,16 @@ test('PC access follows the owner blocklist across ordinary windows without one 
   assert.equal(validateCommand('click', { x: 5, y: 5 }, pc).category, 'pc-editing-blocked');
   assert.equal(validateCommand('move', { x: 5, y: 5 }, pc).allowed, true);
   assert.equal(validateCommand('scroll', { deltaY: 100 }, pc).allowed, true);
-  assert.equal(validateCommand('key', { key: 'ALT+F4' }, pc).allowed, true);
+  assert.equal(validateCommand('key', { key: 'ALT+F4' }, pc).category, 'pc-editing-blocked');
+  assert.equal(validateCommand('move_window', { snapshotId: 'fresh', x: -20, y: 50 }, pc).allowed, true);
+  assert.equal(validateCommand('close_window', { snapshotId: 'fresh' }, pc).allowed, true);
+  assert.equal(validateCommand('launch_app', { app: 'C:\\Windows\\System32\\notepad.exe' }, pc).allowed, true);
+  assert.equal(validateCommand('launch_app', { app: 'C:\\Program Files\\Google\\Chrome\\chrome.exe' }, pc).category, 'app-blocked');
+  for (const app of ['cmd', 'powershell', '../notepad.exe', 'notepad.exe', 'C:\\Tools\\..\\bad.exe', '\\\\server\\share\\bad.exe'])
+    assert.equal(validateCommand('launch_app', { app }, pc).category, 'app-blocked');
+  assert.equal(validateCommand('launch_app', { app: 'C:\\Windows\\System32\\notepad.exe' }, context()).category, 'pc-access-required');
+  assert.equal(validateCommand('move_window', { snapshotId: 'fresh', x: 50000, y: 0 }, pc).category, 'bad-arguments');
+  assert.equal(validateCommand('close_window', { snapshotId: 'fresh', force: true }, pc).category, 'bad-arguments');
   for (const [name, args] of [
     ['type', { text: 'replace this' }], ['drag', {}], ['clipboard_write', { text: 'replace this' }],
     ['key', { key: 'DELETE' }], ['key', { key: 'BACKSPACE' }], ['key', { key: 'CTRL+X' }],

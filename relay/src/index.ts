@@ -11,7 +11,7 @@ const FRAME_LIMIT = 10 * 1024 * 1024;
 const COMMAND_TIMEOUT = 20_000;
 const STATE_TIMEOUT = 5_000;
 const HEARTBEAT_TIMEOUT = 30_000;
-const COMMANDS = new Set(['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'focus', 'click', 'move', 'drag', 'type', 'key', 'scroll', 'clipboard_read', 'clipboard_write', 'record_start', 'record_stop', 'stop_all']);
+const COMMANDS = new Set(['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'focus', 'move_window', 'close_window', 'launch_app', 'click', 'move', 'drag', 'type', 'key', 'scroll', 'clipboard_read', 'clipboard_write', 'record_start', 'record_stop', 'stop_all']);
 const TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const REQUEST_ID = /^[A-Za-z0-9_-]{8,96}$/;
 function json(data: unknown, status = 200): Response {
@@ -306,7 +306,7 @@ export class BotDeskSession extends DurableObject<Env> {
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      relayContractVersion: '1.5.0' };
+      relayContractVersion: '1.6.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);

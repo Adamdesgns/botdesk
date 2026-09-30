@@ -68,6 +68,12 @@ test('fresh snapshot id and bounded inputs are required before HTTP call', async
   assert.equal(validateToolArgs('botdesk_clipboard_write', { text: 'copied' }), 'clipboard_write');
   assert.throws(() => validateToolArgs('botdesk_clipboard_write', { text: 'x'.repeat(4001) }));
   assert.equal(validateToolArgs('botdesk_focus', {}), 'focus');
+  assert.equal(validateToolArgs('botdesk_move_window', { snapshotId: 'fresh', x: -100, y: 40 }), 'move_window');
+  assert.equal(validateToolArgs('botdesk_close_window', { snapshotId: 'fresh' }), 'close_window');
+  assert.equal(validateToolArgs('botdesk_launch_app', { app: 'C:\\Program Files\\Example\\example.exe' }), 'launch_app');
+  assert.throws(() => validateToolArgs('botdesk_launch_app', { app: 'cmd', arguments: '/c del' }));
+  assert.throws(() => validateToolArgs('botdesk_move_window', { snapshotId: 'fresh', x: 40000, y: 0 }));
+  assert.throws(() => validateToolArgs('botdesk_close_window', { snapshotId: 'fresh', force: true }));
   assert.equal(validateToolArgs('botdesk_list_monitors', {}), 'list_monitors');
 });
 
@@ -141,6 +147,6 @@ test('screenshot content carries target pixels and snapshot id and rejects inval
 
 test('SDK client starts the MCP executable and completes tools over real stdio', { timeout: 20_000 }, async () => {
   const result = await runMcpSmoke();
-  assert.equal(result.toolCount, 18);
+  assert.equal(result.toolCount, 21);
   assert.equal(result.relayRequests, 7);
 });
