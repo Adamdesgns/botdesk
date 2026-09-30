@@ -8,14 +8,17 @@
   "scripts": {
     "start": "electron .",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
-    "check": "npm run test && npm run relay:types && npm run mcp:smoke",
+    "check": "npm run test && npm run relay:types && npm run mcp:smoke && npm run plugin:check",
     "credential:doctor": "node scripts/credential-doctor.mjs",
     "relay:types": "wrangler types --config relay/wrangler.jsonc && tsc -p relay/tsconfig.json --noEmit",
     "relay:dev": "wrangler dev --config relay/wrangler.jsonc",
     "relay:deploy": "wrangler deploy --config relay/wrangler.jsonc",
     "mcp:smoke": "node scripts/mcp-smoke.mjs",
     "build:win": "node scripts/build-icon.mjs && electron-builder --win portable",
-    "build:dir": "electron-builder --dir --win"
+    "build:dir": "electron-builder --dir --win",
+    "plugin:build": "node scripts/build-plugin.mjs",
+    "plugin:check": "npm run plugin:build && node scripts/check-plugin.mjs",
+    "plugin:pack": "npm run plugin:check && powershell -NoProfile -File scripts/package-plugin.ps1"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -28,7 +31,8 @@
     "miniflare": "^5.20260908.0-alpha",
     "playwright-core": "^1.58.0",
     "typescript": "^5.9.2",
-    "wrangler": "4.130.0"
+    "wrangler": "4.130.0",
+    "esbuild": "0.28.1"
   },
   "build": {
     "asarUnpack": [

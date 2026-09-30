@@ -1,58 +1,30 @@
-# BotDesk Free
+# BotDoor / BotDesk
 
-A free Windows companion for Grok bot owners using a compatible tool runner.
+BotDoor gives an owner-controlled bot access to a Windows PC through the separately running BotDesk companion and a private relay. This branch implements the 1.6 protocol contract; the legacy Electron/npm package name and version remain BotDesk 0.1.0. It is independent software, with no OpenAI or xAI endorsement.
 
-Let approved bots operate one selected app window on your Windows PC while you are away. Use your private phone dashboard to go live now, set a countdown, schedule a dated window such as **6 AM to 6 PM**, pause access, or turn it off.
+The owner chooses an access scope, grants a time-limited session, and can pause or stop access. One-window mode permits guarded input only in the selected app. PC access permits ordinary-window viewing, focus, scrolling, pointer movement, moving/closing windows and exact-path executable launch; it blocks clicks, typing, content drag, editing keys and clipboard writes. Closing can discard unsaved work; programs can have effects when launched. No absolute no-data-loss guarantee is made.
 
-**Development baseline, not a store launch.** The public landing page is in [`site/`](site/). You deploy your own Cloudflare relay; there is no shared BotDesk cloud. Local simulations are not proof of a phone controlling a real desktop. See [verification](docs/VERIFICATION.md), [setup](docs/SETUP.md), and [security boundaries](docs/SECURITY.md).
+The PC must remain awake, signed in and unlocked with its companion running. It cannot unlock Windows or operate UAC/secure-desktop or elevated/sensitive windows. Local STOP and Ctrl+Shift+F12 revoke access. Every input needs a fresh snapshot; stale or changed targets require owner recovery, never automatic substitution.
 
-## Prepare this PC
+## Setup and tools
 
-After [setting up and provisioning your private relay](docs/SETUP.md), use the host's three tabs:
+Provision your own private relay and host using [setup](docs/SETUP.md). Configure the bot runner privately with only its bot credential. Keep owner links, pairing files and all credentials out of source and chat. The relay command API is not a remote MCP endpoint.
 
-1. **Pair PC:** paste the host pairing JSON, choose **Read pairing details**, then **Save & connect**.
-2. **Choose window:** open the target app, choose **Refresh**, and select its window.
-3. **Phone access:** enable **Allow access from my phone**, choose **Save phone settings**, then **Copy private phone link** for yourself.
+The local MCP adapter exposes 21 tools over stdio using the official MCP SDK. It checks status/capabilities, captures the permitted window, lists eligible windows/monitors, performs scope-allowed actions, records guarded local frames and stops access. The tool prefix remains `botdesk_`. [Security boundaries](docs/SECURITY.md) and dated release notes describe implementation and acceptance limits.
 
-Keep Windows awake and unlocked. Use **Go live — 8 hours** or the phone schedule when ready. Connect a compatible bot runner separately using the [MCP setup instructions](docs/SETUP.md#connect-the-approved-bot); give it only the bot credential.
+## Codex plugin
 
-## Owner controls
-
-- GO LIVE defaults to eight hours, with a maximum of twelve hours.
-- Schedule a start and end time from the phone, in the phone's displayed timezone. This is one dated window, not a daily recurring schedule.
-- The dashboard shows time remaining. Start and stop happen automatically without a phone page staying open or anyone confirming at the PC.
-- A brief network interruption stops commands; reconnection can resume within the saved owner-authorized window. OFF and PAUSE cancel that window.
-- The local STOP button and Ctrl+Shift+F12 cancel access and lock remote arming until someone unlocks the local stop.
-- The PC must stay awake and signed in, with BotDesk running and an approved target selected. Restarting BotDesk requires target selection again. It does not power on or unlock Windows.
-
-## Bot tools
-
-BotDesk is independent software, not an official xAI product. It does not sign into Grok or add tools to the standard Grok chat. Your bot runner must be able to launch the included MCP adapter.
-
-The MCP adapter exposes twelve tools over stdio using the official MCP SDK: status, screenshot, accessible-page snapshot, target-window information, guarded focus of the already-approved window, click, type, limited key presses, scroll, recording start/stop, and stop all. Dynamic MCP is not supported. Only one bot can operate the selected window at a time. After arm, if another window takes the foreground, `botdesk_focus` asks Windows to restore that same HWND/PID only; it never picks a different window, and it fails closed if Windows refuses.
-
-Input needs a fresh screenshot or snapshot. The host checks the target, process, Windows permissions, sensitive content signals, session deadline and command identity before acting. Screenshots capture only the selected window. Local WebM recordings use guarded snapshots at roughly one frame per second, without audio; they are suitable for test evidence, not smooth promotional footage.
-
-## Local commands
+[Plugin README](plugins/botdoor/README.md) describes the separately packaged adapter, private setup and local installation. [Submission checkpoint](docs/plugin-submission/SUBMISSION.md) records current official requirements, exact portal steps and outstanding gates. This local package has not been uploaded, submitted, approved or published. Public directory submission needs hosted HTTPS MCP or OpenAI acceptance of local MCP, public policy/support URLs, verified identity and a dedicated tested review environment.
 
 ```powershell
 npm ci
 npm run check
-node scripts/desktop-smoke.mjs
-node scripts/onboarding-smoke.mjs
-node scripts/recording-smoke.mjs
+npm run plugin:pack
 npm run build:win
-node scripts/desktop-smoke.mjs --packaged
 ```
 
-The Windows portable build is `dist/BotDesk-0.1.0-portable.exe`. This development build is unsigned. GitHub Releases is the download target for the landing page; pairing secrets stay outside the repository and are encrypted by Windows when saved in the host.
+The plugin output is `dist/botdoor-plugin`; the standalone Windows portable is `dist/BotDesk-0.1.0-portable.exe`. Neither build launches or replaces a host. Installing a plugin does not deploy/provision a relay, install a Windows companion, enable startup or grant access.
 
-Closing BotDesk's window hides it to the tray; Quit BotDesk ends the host. Automatic startup is optional and is not enabled by this build process.
+## Evidence
 
-## Preview
-
-Synthetic setup and phone previews; these images do not show a live pairing.
-
-![BotDesk Free first-run setup in a synthetic fixture](docs/images/desktop-setup.png)
-
-[Synthetic phone schedule preview](docs/images/phone-schedule.png)
+[Verification](docs/VERIFICATION.md) contains historical evidence. [1.6 release record](docs/PC-NAVIGATION-RELEASE-2026-09-29.md) and [startup record](docs/REBOOT-STARTUP-2026-09-29.md) distinguish deployed/local evidence from acceptance. Real phone taps, Grok Bot private credential setup, bounded live actions, frozen-app recovery and sign-in after reboot remain unverified unless a later dated record proves them. Fixture checks do not prove those outcomes. Continuous live-screen video is separate private work.

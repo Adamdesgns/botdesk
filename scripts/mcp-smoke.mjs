@@ -10,7 +10,7 @@ const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AA
 
 // Real SDK client -> real stdio child process -> loopback HTTP fixture.
 // This deliberately never connects to a host or performs desktop input.
-export async function runMcpSmoke() {
+export async function runMcpSmoke(serverPath = fileURLToPath(new URL('../mcp/server.mjs', import.meta.url))) {
   const requests = [];
   const fixture = createServer(async (request, response) => {
     try {
@@ -39,7 +39,7 @@ export async function runMcpSmoke() {
   await once(fixture, 'listening');
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: [fileURLToPath(new URL('../mcp/server.mjs', import.meta.url))],
+    args: [serverPath],
     env: { ...Object.fromEntries(Object.entries(process.env).filter(([, value]) => typeof value === 'string')), BOTDESK_RELAY_URL: `http://127.0.0.1:${fixture.address().port}`, BOTDESK_HOST_ID: 'smoke-host', BOTDESK_BOT_TOKEN: 'local-smoke-token-123456789', BOTDESK_BOT_ID: '' },
     stderr: 'pipe'
   });
@@ -75,6 +75,7 @@ export async function runMcpSmoke() {
     for (const name of ['botdesk_record_stop', 'botdesk_stop_all']) {
       assert.notEqual((await client.callTool({ name, arguments: {} })).isError, true);
     }
+    assert.equal(requests.length, 7, 'Each tool call must reach the relay exactly once');
     assert.equal(new Set(requests.map((request) => request.botId)).size, 1, 'One MCP process keeps one bot session identity');
     assert.equal(new Set(requests.map((request) => request.requestId)).size, requests.length, 'Every request must have a fresh replay ID');
     return { toolCount: tools.tools.length, relayRequests: requests.length, transport: 'stdio SDK client + loopback HTTP fixture' };

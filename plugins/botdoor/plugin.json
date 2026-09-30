@@ -1,0 +1,26 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "botdoor",
+  "version": "1.6.0",
+  "description": "Owner-controlled access to a Windows PC through the BotDoor companion.",
+  "author": { "name": "Adam Designs" },
+  "keywords": ["windows", "remote-access", "owner-controls"],
+  "extensions": {
+    "com.openai": {
+      "onboardingSkill": "./skills/botdoor/SKILL.md",
+      "interface": {
+        "displayName": "BotDoor",
+        "shortDescription": "Owner-controlled PC access",
+        "longDescription": "Use BotDoor to check your Windows companion's connection and owner permission, inspect an approved window, and perform permitted actions during an owner-authorized time window. Requires a separately installed Windows host, a provisioned private relay, and a bot-only credential configured privately on the runner. The host must remain awake, unlocked, and running. One-window mode permits guarded input in the selected app; PC access mode permits viewing, focus, scroll, pointer movement, window movement and closing, and exact-path executable launch, while blocking clicks, typing, drag, editing keys and clipboard writes. Closing can discard unsaved work; launching an existing program can have side effects. Local STOP and Ctrl+Shift+F12 revoke access. It cannot unlock Windows, control UAC, guarantee frozen-app recovery, or provide continuous live video. This package uses a local stdio MCP adapter; public directory review requires a hosted HTTPS MCP endpoint or an approved local-MCP exception. Independent software; no OpenAI or xAI endorsement.",
+        "developerName": "Adam Designs",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "composerIcon": "./assets/icon.png",
+        "logo": "./assets/icon.png",
+        "defaultPrompt": ["Check whether my BotDoor PC is connected and whether access is enabled.", "Show the owner-approved window while access is enabled.", "Stop my BotDoor session."],
+        "brandColor": "#D5291F"
+      },
+      "publication": { "release_notes": "Initial local Codex package for the BotDoor 1.6 contract. Public submission remains gated on transport, public policy URLs and reviewer acceptance." }
+    }
+  }
+}
