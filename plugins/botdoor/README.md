@@ -1,12 +1,12 @@
 # BotDoor for Codex
 
-Owner-controlled Windows access using the BotDoor 1.7 companion. The tool names retain `botdesk_` for compatibility. This is independent software.
+Owner-controlled Windows access using the BotDoor 1.8 companion. The tool names retain `botdesk_` for compatibility. This is independent software.
 
 ## Prerequisites and setup
 
 The runner needs Node.js 22 or newer. The controlled computer needs the separately installed Windows companion, a provisioned private relay, and an owner-selected access policy. It must stay awake, unlocked and connected. This plugin does not install or start the companion.
 
-Build with `npm run plugin:pack` from the source repository. The resulting `dist/botdoor-plugin` contains a bundled adapter with its JavaScript dependencies; users do not run npm install inside the plugin. The ZIP is `dist/BotDoor-1.7.0-codex-local.zip`.
+Build with `npm run plugin:pack` from the source repository. The resulting `dist/botdoor-plugin` contains a bundled adapter with its JavaScript dependencies; users do not run npm install inside the plugin. The ZIP is `dist/BotDoor-1.8.0-codex-local.zip`.
 
 Configure `BOTDESK_RELAY_URL`, `BOTDESK_HOST_ID`, and `BOTDESK_BOT_TOKEN` in the runner's private environment before starting Codex. Use only a bot credential, never the owner link, host token or pairing file. The adapter reads these variables at runtime; none belong in the ZIP or chat. User-level MCP configuration may need `env_vars` to forward these variables, depending on the runner. Never paste a real value into an example or commit it.
 
@@ -18,7 +18,7 @@ On the paired Windows PC, explicitly set `BOTDESK_LOCAL_PAIRING=1` instead of pr
 
 ## Boundaries
 
-One-window mode permits guarded input only in the selected target. PC access supports viewing, focus, scroll, pointer movement, window movement/close and exact-path executable launch; it blocks click/type/drag/editing keys and clipboard writes. Closing may discard unsaved work; launching programs can have side effects. Explicit Owner control permits coding-app input and elevated apps when the companion itself runs as administrator. Password controls, Windows Security and UAC remain unavailable. Local STOP and Ctrl+Shift+F12 revoke access. BotDoor does not unlock Windows or offer continuous live video.
+One-window mode permits guarded input only in the selected target. PC access supports viewing, focus, scroll, pointer movement, window movement/close and exact-path executable launch; it blocks click/type/drag/editing keys and clipboard writes. Closing may discard unsaved work; launching programs can have side effects. Explicit Owner control lets the bot manage programs and request human input using botdesk_request_owner. The phone shows Waiting for you; Done returns control. Poll status for the same completed handoff before continuing. This does not wake an idle external AI chat. Normal apps require no administrator setup. Password controls, Windows Security and UAC remain unavailable. Local STOP and Ctrl+Shift+F12 revoke access. BotDoor does not unlock Windows or offer continuous live video.
 
 Screenshots and accessible labels pass through the user's relay and runner. Recordings and audit logs are stored by the Windows companion. Use disposable data for acceptance testing. Policy drafts and review cases are maintained in the source repository's `docs/plugin-submission/` folder.
 

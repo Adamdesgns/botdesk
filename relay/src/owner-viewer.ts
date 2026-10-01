@@ -1,5 +1,6 @@
 export const viewerHtml = `<style>body{padding-bottom:100px}#remote-stop{position:fixed;bottom:max(16px,env(safe-area-inset-bottom));right:16px;z-index:20;background:#ff4d3e;color:#111315;border:2px solid #111315;box-shadow:0 3px 12px #0003}#screen{touch-action:pan-y}#viewer-status{overflow-wrap:anywhere}</style><button id="remote-stop">STOP ACCESS</button><section class="card" aria-labelledby="viewer-heading">
 <h2 id="viewer-heading">Control from this phone</h2>
+<div id="handoff-panel" hidden role="status"><strong>Waiting for you</strong><p id="handoff-message"></p><button id="handoff-done">DONE — CONTINUE</button><p class="meta">Type or click below, then return control. Your bot can continue when it checks the completed handoff.</p></div>
 <p class="meta">Take control to pause bot input. Tap the picture to click. This viewer refreshes the current window; it is not a video stream.</p>
 <div class="bot-token-actions"><button id="take-control">TAKE CONTROL</button><button id="give-control">RETURN TO BOT</button></div>
 <p id="viewer-status" class="meta" role="status">Choose Owner control in access rules first.</p>
@@ -45,11 +46,12 @@ async function ownerAct(name,args={},needsFrame=true){
 }
 async function changeOperator(operator){
  if(ownerBusy)return;ownerBusy=true;invalidateOwnerFrame();clearScreen();
- try{render(await request('/api/owner/'+host+'/state',{mode:'armed',minutes:480,operator}));ownerNotice(operator==='owner'?'You have control. Bot input is paused.':'Bot control enabled.');}
+ try{const handoffId=operator==='bot'&&current?.handoff?.state==='waiting'?current.handoff.id:undefined;render(await request('/api/owner/'+host+'/state',{mode:'armed',minutes:480,operator,...(handoffId?{handoffId}:{})}));ownerNotice(operator==='owner'?'You have control. Bot input is paused.':'Bot control enabled.');}
  catch(e){ownerNotice(e.message);}finally{ownerBusy=false;await refresh();if(operator==='owner')await ownerCapture();}
 }
 vq('#take-control').onclick=()=>changeOperator('owner');
 vq('#give-control').onclick=()=>changeOperator('bot');
+vq('#handoff-done').onclick=()=>changeOperator('bot');
 vq('#remote-stop').onclick=()=>vq('[data-action="off"]').click();
 screen.addEventListener('click',event=>{
  if(!ownerFrame||!isOwner()||ownerBusy||ownerCapturing)return;
@@ -76,8 +78,10 @@ document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click'
 document.addEventListener('visibilitychange',()=>{if(document.hidden){invalidateOwnerFrame();clearScreen();}});
 window.addEventListener('pagehide',()=>{invalidateOwnerFrame();clearScreen();});
 function renderViewerState(){
+ const waiting=current?.handoff?.state==='waiting';vq('#handoff-panel').hidden=!waiting;vq('#handoff-message').textContent=waiting?current.handoff.message:'';vq('#handoff-done').disabled=!isOwner()||ownerBusy||ownerCapturing;
  const active=isOwner();vq('#take-control').disabled=!current?.hostOnline||current?.target?.accessMode!=='owner-control'||ownerBusy;
  vq('#give-control').disabled=!active||ownerBusy;
+ if(waiting)vq('#take-control').disabled=true;
  document.querySelectorAll('[data-owner-key],[data-owner-scroll],#send-text,#list-owner-windows,#focus-owner-window,#close-owner-window,#owner-launch').forEach(b=>b.disabled=!active||ownerBusy||ownerCapturing);
  if(!active)invalidateOwnerFrame();
 }

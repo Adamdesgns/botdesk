@@ -17,7 +17,7 @@ const server=createServer(async(req,res)=>{
   assert.equal(req.headers.authorization,'Bearer '+token);const chunks=[];for await(const c of req)chunks.push(c);
   const body=chunks.length?JSON.parse(Buffer.concat(chunks)):null;let result;
   if(req.url.endsWith('/status'))result=state;
-  else if(req.url.endsWith('/state')){state={...state,mode:body.mode,operator:body.operator||'bot',expiresAt:body.mode==='armed'?Date.now()+480*60000:null};result={...state,confirmed:true};}
+  else if(req.url.endsWith('/state')){if(state.handoff?.state==='waiting'&&body.mode==='armed'){assert.equal(body.handoffId,state.handoff.id);state.handoff={...state.handoff,state:'completed'};}state={...state,mode:body.mode,operator:body.operator||'bot',expiresAt:body.mode==='armed'?Date.now()+480*60000:null,...(body.mode==='off'?{handoff:null}:{})};result={...state,confirmed:true};}
   else if(req.url.endsWith('/command')){
    actions.push(body);
    if(body.name==='screenshot'){if(delayed)await new Promise(resolve=>releaseCapture=resolve);result={ok:true,result:{snapshotId:'fixture-'+(++sequence),window:{title:'Fixture coding session',geometry:{width:640,height:360}},image:{mimeType:'image/png',data:pixel}}};}
@@ -49,6 +49,13 @@ try{
  await page.locator('#launch-path').fill('C:\\fixture\\Code.exe');await page.locator('#owner-launch').click();await page.waitForFunction(()=>ownerFrame!==null&&!ownerBusy);assert.ok(actions.some(x=>x.name==='launch_app'));
  await page.locator('#close-owner-window').click();await page.waitForFunction(()=>ownerFrame!==null&&!ownerBusy);assert.ok(actions.some(x=>x.name==='close_window'));
  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+ state.handoff={id:randomUUID(),state:'waiting',message:'Please type your message <img src=x onerror=alert(1)>'};
+ await page.evaluate(()=>refresh());await page.waitForFunction(()=>!document.querySelector('#handoff-panel').hidden);
+ assert.equal(await page.locator('#handoff-message img').count(),0);
+ await fs.mkdir('evidence',{recursive:true});await page.locator('#handoff-panel').scrollIntoViewIfNeeded();await page.screenshot({path:'evidence/handoff-phone-fixture.png'});
+ await page.locator('#handoff-done').click();await page.waitForFunction(()=>current?.handoff?.state==='completed'&&!ownerBusy);
+ assert.equal(state.operator,'bot');assert.equal(await page.evaluate(()=>ownerFrame),null);
+ await page.locator('#take-control').click();await page.waitForFunction(()=>ownerFrame!==null);
  await fs.mkdir('evidence',{recursive:true});await page.screenshot({path:'evidence/owner-phone-fixture.png',fullPage:true});
  // A pending screenshot must not repopulate the viewer after STOP.
  delayed=true;await page.locator('#preview').click();

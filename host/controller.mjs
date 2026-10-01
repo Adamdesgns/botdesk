@@ -130,7 +130,7 @@ export class HostController extends EventEmitter {
       this.setMode(mode,{minutes,expiresAt,source:'owner-remote',generation:controlGeneration,operator,notify:false});
       result={ok:true,mode:this.mode,expiresAt:this.expiresAt};
     } catch(error) { result={ok:false,mode:this.mode,expiresAt:this.expiresAt,error:error.message}; }
-    this.relay?.send({type:'owner_state_result',requestId,controlGeneration,...result}); return result;
+    this.relay?.send({type:'owner_state_result',requestId,controlGeneration,operator:this.operator,...result}); return result;
   }
   async runCommand({commandId,name,args={},botId='remote-bot',controlGeneration,expiresAt}) {
     const access=this.configStore.load();
@@ -144,6 +144,7 @@ export class HostController extends EventEmitter {
     if(name==='record_stop') {if(this.operationName==='record_start')this.operation?.abort();return {ok:true,result:await this.stopRecording()};}
     if(typeof commandId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(commandId)||!Number.isFinite(expiresAt)||!Number.isInteger(controlGeneration))return fail('invalid-command-envelope');
     if(this.operator==='owner'&&botId!=='owner-preview')return fail('owner-has-control');
+    if(botId!=='owner-preview'&&this.configStore.load().accessMode==='owner-control'&&['click','type','key','drag','clipboard_read','clipboard_write'].includes(name))return fail('owner-input-required');
     if(botId==='owner-preview'&&!['screenshot','snapshot','list_windows','list_monitors'].includes(name)&&this.operator!=='owner')return fail('take-control-first');
     if(this.operation||this.ownerOperation) return fail('host-busy');
     if(commandId&&this.seen.has(commandId)) return fail('command-replayed');

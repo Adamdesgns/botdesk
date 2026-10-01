@@ -10,7 +10,7 @@ const config = { relayUrl: 'https://relay.example.test', hostId: 'test-host', bo
 const success = (result = { mode: 'off' }) => Response.json({ ok: true, result });
 
 test('MCP tool list matches shared command contract', () => {
-  assert.deepEqual(TOOL_DEFS.map((tool) => tool.name.replace('botdesk_', '')).sort(), [...COMMANDS].sort());
+  assert.deepEqual(TOOL_DEFS.map((tool) => tool.name.replace('botdesk_', '')).sort(), [...COMMANDS, 'request_owner'].sort());
 });
 
 test('away sessions default to eight hours and cap at twelve hours', () => {
@@ -147,6 +147,6 @@ test('screenshot content carries target pixels and snapshot id and rejects inval
 
 test('SDK client starts the MCP executable and completes tools over real stdio', { timeout: 20_000 }, async () => {
   const result = await runMcpSmoke();
-  assert.equal(result.toolCount, 21);
+  assert.equal(result.toolCount, 22);
   assert.equal(result.relayRequests, 7);
 });

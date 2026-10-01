@@ -25,6 +25,7 @@ const schema = (properties = {}, required = []) => ({ type: 'object', properties
 const pointProps = { x: { type: 'integer', minimum: 0, maximum: 32767 }, y: { type: 'integer', minimum: 0, maximum: 32767 } };
 
 export const TOOL_DEFS = [
+  { name: 'botdesk_request_owner', description: 'Yield an active Owner control session to the human. Explain what they should type or click. Returns a waiting handoff immediately; poll botdesk_status until that same handoff is completed before continuing. STOP, expiry or disconnect cancels it. Never type or approve on the human behalf.', inputSchema: schema({ message: { type: 'string', minLength: 1, maxLength: 500 } }, ['message']) },
   { name: 'botdesk_status', description: 'Check connection, owner permission, access scope/expiry and bot session status. Available while paused or off. Distinguishes host-offline, not-armed, session-expired and authentication failures.', inputSchema: schema() },
   { name: 'botdesk_capabilities', description: 'Report the versioned SDK contract, available tools, granted scope flags and hard platform limits (UAC/secure desktop). Does not require arming.', inputSchema: schema() },
   { name: 'botdesk_screenshot', description: 'Capture the foreground Windows window within the active owner scope. PC viewing permits ordinary unblocked apps; one-window mode requires the selected target. Returns an image and fresh snapshotId. Requires armed access.', inputSchema: schema() },
@@ -162,15 +163,15 @@ export function createRelayClient(config, fetchImpl = fetch) {
     if (name === 'capabilities') {
       return {
         contractVersion: CONTRACT_VERSION,
-        commands: [...COMMANDS],
+        commands: [...COMMANDS, 'request_owner'],
         tools: TOOL_DEFS.map((tool) => tool.name),
         capabilities: CAPABILITY_FLAGS,
         limitations: [
           'Cannot bypass Windows UAC or secure desktop.',
           'Password controls, Windows permission screens and the locked desktop are blocked.',
-          'Read status.target.accessMode for the current grant: selected-window, restricted pc-access viewing, or owner-control for coding input.',
+          'Read status.target.accessMode for the current grant. In owner-control the bot manages programs; human input handles typing, clicking, dragging and editing keys.',
           'Owner control supports elevated apps only when the Windows companion itself runs as administrator.',
-          'When status.operator is owner, wait for the owner to return control to the bot.',
+          'Use request_owner to yield to the phone. Poll status for that exact handoff ID to become completed before continuing. Missing handoff means canceled. This does not wake an idle external conversation.',
           'Do not replay clicks after timeout, cancel, disconnect or expiry.'
         ],
         errors: ERROR_CODES

@@ -5,6 +5,7 @@ import { canBotControl, clampMinutes, DEFAULT_STATE, effectiveState, normalizeMo
 type Secrets = { hostHash: string; ownerHash: string; botHash: string };
 type RecordValue = Record<string, unknown>;
 type OwnerSchedule = { id: string; startsAt: number; endsAt: number };
+type Handoff = { id: string; botId: string; message: string; state: 'waiting' | 'completed'; requestedAt: number; expiresAt: number };
 type Pending = { id: string; kind: 'command' | 'state' | 'secret' | 'rotation'; generation: number; mode?: string; expiresAt?: number | null; resolve: (value: Response) => void; timer: ReturnType<typeof setTimeout> };
 const HTTP_LIMIT = 16_384;
 const FRAME_LIMIT = 10 * 1024 * 1024;
@@ -88,6 +89,7 @@ export class BotDeskSession extends DurableObject<Env> {
   private ownerTransition: number | null = null;
   private target: RecordValue | null = null;
   private operator: 'bot' | 'owner' = 'bot';
+  private handoff: Handoff | null = null;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
@@ -138,6 +140,13 @@ export class BotDeskSession extends DurableObject<Env> {
     if (body.operator !== undefined && !['bot','owner'].includes(String(body.operator))) return json({error:'invalid-operator'},400);
     if (body.operator === 'owner' && this.target?.accessMode !== 'owner-control') return json({error:'owner-control-required'},409);
     const replay = this.reserveId(requestId, mode !== 'armed'); if (replay) return replay;
+    if (mode === 'armed' && this.handoff?.state === 'waiting') {
+      this.refreshState();
+      if (!this.handoff || body.handoffId !== this.handoff.id || body.operator !== 'bot') return json({error:'handoff-id-required'},409);
+      if (this.pending || this.ownerTransition !== null) return json({error:'host-busy'},409);
+      return this.transferHandoff({...this.handoff,state:'completed'}, 'bot', requestId);
+    }
+    if (body.handoffId !== undefined) return json({error:'handoff-no-longer-active'},409);
     if (mode === 'armed' && this.pending && !(body.operator === 'owner' && this.pending.kind === 'command')) return json({ error: 'host-busy' }, 409);
     this.forceOff(mode === 'armed' ? 'arm-requested' : `owner-${mode}`);
     this.operator = mode === 'armed' && body.operator === 'owner' ? 'owner' : 'bot';
@@ -229,15 +238,18 @@ export class BotDeskSession extends DurableObject<Env> {
   async command(token: string, role: 'owner' | 'bot', body: RecordValue, botId: string, requestId: string): Promise<Response> {
     if (!['owner', 'bot'].includes(role) || !await this.authorized(token, role)) return json({ error: 'unauthorized' }, 401);
     const name = body.name;
-    if (typeof name !== 'string' || !COMMANDS.has(name) || (body.args !== undefined && !isRecord(body.args))) return json({ error: 'invalid-command' }, 400);
+    if (typeof name !== 'string' || (!COMMANDS.has(name) && name !== 'request_owner') || (body.args !== undefined && !isRecord(body.args))) return json({ error: 'invalid-command' }, 400);
+    if (name === 'request_owner' && (role !== 'bot' || this.target?.accessMode !== 'owner-control' || !isRecord(body.args) || typeof body.args.message !== 'string' || !body.args.message.trim() || body.args.message.length > 500)) return json({error:'invalid-handoff'},400);
     if (role === 'owner' && !['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'stop_all', 'record_stop'].includes(name) && (this.operator !== 'owner' || this.target?.accessMode !== 'owner-control')) return json({ error: 'owner-command-blocked' }, 403);
     if (role === 'bot' && this.operator === 'owner' && !['status','stop_all','record_stop'].includes(name)) return json({error:'owner-has-control'},409);
+    if (role === 'bot' && this.target?.accessMode === 'owner-control' && ['click','type','key','drag','clipboard_read','clipboard_write'].includes(name)) return json({error:'owner-input-required'},409);
     if (role === 'bot' && (!/^[A-Za-z0-9_-]{1,80}$/.test(botId) || botId === 'owner-preview')) return json({ error: 'invalid-bot-id' }, 400);
     const replay = this.reserveId(requestId, name === 'stop_all' || name === 'record_stop'); if (replay) return replay;
     if (name === 'status') return json({ ok: true, result: this.status() });
     if (name === 'stop_all') { this.forceOff('remote-stop'); this.sendSafetyOff('remote-stop'); await this.replaceSchedule(null); return json({ ok: true, result: this.status() }); }
     if (!this.host) return json({ error: 'host-offline' }, 503);
     if (this.pending) return json({ error: 'host-busy' }, 409);
+    if (this.ownerTransition !== null) return json({error:'host-busy'},409);
     this.refreshState();
     if (name !== 'record_stop') {
       if (role === 'owner') {
@@ -247,6 +259,11 @@ export class BotDeskSession extends DurableObject<Env> {
         if (!verdict.allowed || !verdict.next) return json({ error: verdict.error }, 409);
         this.state = verdict.next;
       }
+    }
+    if (name === 'request_owner') {
+      const handoff: Handoff = {id:crypto.randomUUID(),botId,message:String((body.args as RecordValue).message),state:'waiting',requestedAt:Date.now(),expiresAt:this.state.expiresAt!};
+      const response = await this.transferHandoff(handoff,'owner',requestId);
+      return response.ok ? json({ok:true,result:await response.json()}) : response;
     }
     const commandId = crypto.randomUUID();
     return this.sendAndWait('command', { type: 'command', commandId, name, args: body.args || {}, botId: role === 'owner' ? 'owner-preview' : botId, ownerPreview: role === 'owner', expiresAt: Math.min(Date.now() + COMMAND_TIMEOUT, this.state.expiresAt || Infinity), controlGeneration: this.generation }, commandId);
@@ -305,13 +322,28 @@ export class BotDeskSession extends DurableObject<Env> {
     if (this.seen.size >= 2048) return safetyStop ? null : json({ error: 'request-rate-limit' }, 429);
     this.seen.set(id, now + 5 * 60_000); return null;
   }
+  private async transferHandoff(handoff: Handoff, operator: 'bot' | 'owner', requestId: string): Promise<Response> {
+    if (!this.host || handoff.expiresAt <= Date.now()) return json({error:'handoff-expired'},409);
+    this.forceOff('handoff-transition');
+    const generation = this.generation;
+    this.ownerTransition = generation;
+    this.operator = operator;
+    try {
+      await this.replaceSchedule(null);
+      if (this.generation !== generation || !this.host) return json({error:'handoff-canceled'},409);
+      const response = await this.sendAndWait('state',{type:'owner_state',requestId,mode:'armed',operator,expiresAt:handoff.expiresAt,controlGeneration:generation},requestId,'armed',handoff.expiresAt);
+      if (!response.ok || this.generation !== generation) return response;
+      this.handoff = handoff;
+      return json({...this.status(),confirmed:true});
+    } finally { if (this.ownerTransition === generation) this.ownerTransition = null; }
+  }
   private status() {
     this.refreshState();
     return { ...this.state, hostOnline: this.host !== null, controlGeneration: this.generation, pending: this.pending?.kind || null,
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      operator:this.operator, relayContractVersion: '1.7.0' };
+      operator:this.operator, handoff:this.handoff, relayContractVersion: '1.8.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);
@@ -336,6 +368,7 @@ export class BotDeskSession extends DurableObject<Env> {
     if (pending) { clearTimeout(pending.timer); pending.resolve(response); }
   }
   private forceOff(reason: string): void {
+    this.handoff = null;
     this.operator = 'bot';
     this.generation++; clearTimeout(this.expiryTimer);
     this.state = { ...DEFAULT_STATE, hostLastSeen: this.state.hostLastSeen };
@@ -386,7 +419,7 @@ export class BotDeskSession extends DurableObject<Env> {
     const pending = this.pending;
     if (!pending || pending.generation !== this.generation) return;
     if (message.type === 'owner_state_result' && pending.kind === 'state' && message.requestId === pending.id) {
-      if (message.ok !== true || message.mode !== pending.mode || message.expiresAt !== pending.expiresAt || message.controlGeneration !== pending.generation) {
+      if (message.ok !== true || message.mode !== pending.mode || message.expiresAt !== pending.expiresAt || message.controlGeneration !== pending.generation || (this.ownerTransition === pending.generation && message.operator !== this.operator)) {
         this.settle(json({ error: typeof message.error === 'string' ? message.error.slice(0, 160) : 'owner-state-rejected', ...this.status() }, 409));
         this.forceOff('owner-state-rejected'); this.sendSafetyOff('owner-state-rejected'); return;
       }

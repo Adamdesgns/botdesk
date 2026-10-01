@@ -48,12 +48,12 @@ export async function runMcpSmoke(serverPath = fileURLToPath(new URL('../mcp/ser
   try {
     await client.connect(transport, { timeout: 10_000 });
     const tools = await client.listTools();
-    assert.equal(tools.tools.length, 21);
+    assert.equal(tools.tools.length, 22);
     for (const suffix of ['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'focus', 'move_window', 'close_window', 'launch_app', 'scroll', 'click', 'move', 'drag', 'type', 'key', 'clipboard_read', 'clipboard_write', 'record_start', 'record_stop', 'stop_all']) {
       assert.ok(tools.tools.some((tool) => tool.name === `botdesk_${suffix}`));
     }
     const capabilities = await client.callTool({ name: 'botdesk_capabilities', arguments: {} });
-    assert.equal(JSON.parse(capabilities.content[0].text).contractVersion, '1.7.0');
+    assert.equal(JSON.parse(capabilities.content[0].text).contractVersion, '1.8.0');
     const status = await client.callTool({ name: 'botdesk_status', arguments: {} });
     assert.equal(JSON.parse(status.content[0].text).mode, 'off');
     const screenshot = await client.callTool({ name: 'botdesk_screenshot', arguments: {} });

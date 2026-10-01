@@ -115,9 +115,43 @@ test('phone takeover crosses the actual relay and host, excludes bot input and r
  const fresh=(await ownerCmd('screenshot')).body.result;
  const back=await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot'});assert.equal(back.status,200);assert.equal(host.operator,'bot');
  assert.equal((await ownerCmd('click',{snapshotId:fresh.snapshotId,x:1,y:1})).body.error,'owner-command-blocked');
- assert.equal((await api(botRoute(c),c.botToken,{name:'click',args:{snapshotId:fresh.snapshotId,x:1,y:1}},{'x-bot-id':'bot-a'})).body.error,'fresh-snapshot-required');
+ assert.equal((await api(botRoute(c),c.botToken,{name:'click',args:{snapshotId:fresh.snapshotId,x:1,y:1}},{'x-bot-id':'bot-a'})).body.error,'owner-input-required');
+ const expiry=back.body.expiresAt;
+ const requested=await api(botRoute(c),c.botToken,{name:'request_owner',args:{message:'Please type your message in Claude.'}},{'x-bot-id':'bot-a'});
+ assert.equal(requested.status,200,JSON.stringify(requested));
+ const handoff=requested.body.result.handoff;
+ assert.equal(handoff.state,'waiting');assert.equal(host.operator,'owner');assert.equal(requested.body.result.expiresAt,expiry);assert.equal(requested.body.result.schedule,null);
+ assert.equal((await command(c,'screenshot')).body.error,'owner-has-control');
+ assert.equal((await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot',handoffId:'stale'})).status,409);
+ const manual=(await ownerCmd('screenshot')).body.result;
+ assert.equal((await ownerCmd('type',{snapshotId:manual.snapshotId,text:'Human message'})).status,200);
+ const done=await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot',handoffId:handoff.id});
+ assert.equal(done.status,200,JSON.stringify(done));assert.equal(done.body.handoff.state,'completed');assert.equal(done.body.expiresAt,expiry);assert.equal(host.operator,'bot');
+ assert.equal((await command(c,'status')).body.result.handoff.id,handoff.id);
+ assert.equal((await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot',handoffId:handoff.id})).status,409);
  await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'off'});
+ assert.equal((await command(c,'status')).body.result.handoff,null);
+ assert.equal((await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot',handoffId:handoff.id})).status,409);
  assert.equal((await ownerCmd('screenshot')).body.error,'not-armed');
+});
+
+test('handoff cannot arm access; STOP and disconnect cancel waiting and in-flight handoffs',async t=>{
+ const c=await provision(),socket=await connected(c,t);
+ socket.send(JSON.stringify({type:'target_status',target:{state:'pc-access',accessMode:'owner-control'}}));
+ await until(async()=>(await api(ownerRoute(c)+'/status',c.ownerToken)).body.target?.accessMode==='owner-control');
+ const ask=()=>api(botRoute(c),c.botToken,{name:'request_owner',args:{message:'Type your message'}},{'x-bot-id':'bot-a'});
+ assert.equal((await ask()).body.error,'not-armed');
+ await arm(c,socket);
+ const pending=ask(),transfer=await socket.next('owner_state');assert.equal(transfer.operator,'owner');
+ await command(c,'stop_all');socket.send(JSON.stringify({...transfer,type:'owner_state_result',ok:true}));
+ assert.equal((await pending).status,409);assert.equal((await command(c,'status')).body.result.handoff,null);
+ await arm(c,socket);
+ const next=ask();let takeover;do{takeover=await socket.next('owner_state');}while(takeover.mode!=='armed');
+ socket.send(JSON.stringify({...takeover,type:'owner_state_result',ok:true}));
+ const id=(await next).body.result.handoff.id;
+ socket.close();await until(async()=>!(await command(c,'status')).body.result.hostOnline);
+ assert.equal((await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot',handoffId:id})).status,409);
+ assert.equal((await command(c,'status')).body.result.handoff,null);
 });
 
 test('owner takeover preempts an in-flight bot command and ignores its late result',async t=>{
@@ -220,7 +254,7 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
   assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
   const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
-  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.7.0');
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.8.0');
   assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
   const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
   assert.equal((await command(c,'screenshot')).status,200);

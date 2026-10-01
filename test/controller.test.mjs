@@ -52,7 +52,7 @@ test('Owner control policy changes revoke prior bot snapshots and high/system pr
  const s=setup(t,{accessMode:'owner-control',blockedApps:[],allowRemoteArm:true});s.arm();
  s.changeWindow({processName:'pwsh',title:'PowerShell',integrity:'high'});
  const snapshotId=await s.capture();
- assert.equal((await s.controller.runCommand(s.command('type',{snapshotId,text:'Get-Location'}))).ok,true);
+ assert.equal((await s.controller.runCommand(s.command('type',{snapshotId,text:'Get-Location'}))).error,'owner-input-required');
  s.changeWindow({integrity:'system'});
  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'elevated');
  s.changeWindow({integrity:'high',desktop:'winlogon'});

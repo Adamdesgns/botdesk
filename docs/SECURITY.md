@@ -1,6 +1,10 @@
 # Security boundaries
 
-## Current 1.7 Owner control addition
+## Current 1.8 shared control
+
+In Owner control, both host and relay deny bot clicks, typing, drag, editing keys and clipboard access. The human can use the authenticated phone viewer for input. `request_owner` can only transfer an already active grant, preserves its deadline and removes reconnect scheduling. The exact handoff ID is required to complete it; host acknowledgement must confirm the new operator. STOP, expiry and disconnect clear it. Messages are rendered as text and contain instructions only, never auto-executed input. Bot polling observes completion; no external chat is automatically awakened. Normal apps need no administrator setup. Downstream coding programs can still change or delete files; this is not an absolute no-delete sandbox.
+
+## Earlier 1.7 Owner control foundation (input policy superseded above)
 
 The owner can explicitly select Owner control for coding apps, terminals and editing. Its native helper permits elevated targets only when it also runs elevated. System integrity, Windows Security, UAC/secure desktop and password controls remain blocked. Old viewing/selected-window policies keep their existing restrictions. No UAC policy or startup task is changed. Owner control is not a security sandbox: code execution can change or delete files.
 
