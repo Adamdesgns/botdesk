@@ -150,12 +150,12 @@ function updateClock() {
 function render(status) {
   latestStatus = status || { mode: 'off', relay: {} };
   const mode = latestStatus.mode || 'off';
-  const pcAccess = savedConfig.accessMode === 'pc-access';
+  const pcAccess = ['pc-access','owner-control'].includes(savedConfig.accessMode);
   byId('sessionMinutes').disabled = ['armed', 'running'].includes(mode) || pending.has('sessionMinutes');
   byId('modeBadge').className = 'mode ' + mode;
   setText('modeBadge', mode.toUpperCase());
   const titles = { off: 'Bot access is off', armed: 'Waiting for an approved bot', running: pcAccess ? 'A bot is controlling this PC' : 'A bot is controlling this window', paused: 'Bot access is paused' };
-  setText('statusTitle', titles[mode] || mode);
+  setText('statusTitle', latestStatus.operator==='owner'&&['armed','running'].includes(mode) ? 'You have control from your phone' : titles[mode] || mode);
   setText('statusDetail', latestStatus.inputSafetyFault ? 'Mouse release could not be confirmed. Check the mouse locally, then restart BotDesk. Access remains locked off.' : latestStatus.stopLatched ? 'Local stop is locked. Unlock it here before remote arming.' : latestStatus.expiresAt ? 'Access expires ' + new Date(latestStatus.expiresAt).toLocaleTimeString() + '.' : 'Bot commands are rejected until you arm a session.');
   setText('relayState', latestStatus.relay?.authenticated ? 'Securely connected' : latestStatus.relay?.connected ? 'Authenticating' : 'Offline');
   setText('hostState', latestStatus.hostId || 'Not configured');
@@ -174,14 +174,15 @@ async function load({ fillForm = true } = {}) {
   if (!state?.config || !state?.status) throw new Error('Could not read this PC’s current setup.');
   savedConfig = { ...state.config };
   byId('studioAccess').checked = (savedConfig.allowedApps || []).includes('robloxstudiobeta');
-  byId('selectedWindowControls').hidden = savedConfig.accessMode === 'pc-access';
-  setText('windowScopeSummary', savedConfig.accessMode === 'pc-access' ? 'PC access · unblocked ordinary apps' : 'One selected window');
+  byId('selectedWindowControls').hidden = ['pc-access','owner-control'].includes(savedConfig.accessMode);
+  setText('windowScopeSummary', savedConfig.accessMode==='owner-control' ? 'Owner control · coding and administrator apps' : savedConfig.accessMode==='pc-access' ? 'PC viewing · unblocked ordinary apps' : 'One selected window');
   if (fillForm) {
     for (const id of fields) byId(id).value = savedConfig[id] || '';
     byId('allowedApps').value = (savedConfig.allowedApps || []).join(', ');
     byId('remoteArm').checked = savedConfig.allowRemoteArm === true;
     byId('startAtLogin').checked = savedConfig.startAtLogin === true;
-    byId('pcAccess').checked = savedConfig.accessMode === 'pc-access';
+    byId('ownerControl').checked = savedConfig.accessMode === 'owner-control';
+    byId('pcAccess').checked = savedConfig.accessMode==='pc-access';
     byId('blockedApps').value = (savedConfig.blockedApps || []).join(', ');
   }
   render(state.status);
@@ -223,14 +224,14 @@ byId('copyOwnerLink').onclick = async () => {
 };
 byId('openCaptures').onclick = () => action(() => window.botdesk.openCaptures(), { ids: ['openCaptures'], label: 'OPENING…' });
 byId('saveAccessPolicy').onclick = async () => {
-  const accessMode = byId('pcAccess').checked ? 'pc-access' : 'selected-window';
+  const accessMode = byId('ownerControl').checked ? 'owner-control' : byId('pcAccess').checked ? 'pc-access' : 'selected-window';
   const blockedApps = [...new Set(byId('blockedApps').value.split(',').map((name) => name.trim().toLowerCase().replace(/\.exe$/, '')).filter(Boolean))];
   if (blockedApps.length > 64 || blockedApps.some((name) => !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(name))) {
     notice('Use up to 64 executable names separated by commas.', 'window', 'error');
     return;
   }
-  if (accessMode === 'pc-access' && !window.confirm('Allow the bot to use any unblocked ordinary app while GO LIVE is on? Saving stops the current session.')) return;
-  const result = await action(() => window.botdesk.setAccessPolicy({ accessMode, blockedApps }), { ids: ['saveAccessPolicy', 'pcAccess', 'blockedApps'], label: 'SAVING…', section: 'window' });
+  if (['pc-access','owner-control'].includes(accessMode) && !window.confirm(accessMode==='owner-control' ? 'Enable Owner control, including coding, editing and administrator apps? Programs can change or delete files. Elevated apps require an administrator launch. Saving stops the current session.' : 'Allow viewing and window management in unblocked ordinary apps? Saving stops the current session.')) return;
+  const result = await action(() => window.botdesk.setAccessPolicy({ accessMode, blockedApps }), { ids: ['saveAccessPolicy', 'pcAccess', 'ownerControl', 'blockedApps'], label: 'SAVING…', section: 'window' });
   if (result) {
     notice('Access rules saved. Bot access is OFF. Go live separately when ready.', 'window', 'success');
     await refreshState();

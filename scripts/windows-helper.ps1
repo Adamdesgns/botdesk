@@ -57,17 +57,20 @@ public static class BotDeskNative {
   static readonly HashSet<string> PcProtectedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "botdesk","powershell","pwsh","cmd","windowsterminal","conhost","regedit","taskmgr","mmc","control","systemsettings","securityhealthhost","credentialuibroker","wscript","cscript","python","pythonw","code" };
   static readonly Regex Denied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac|regedit|powershell|terminal|devtools)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|registry\s*editor|task\s*manager|device\s*manager|control\s*panel|group\s*policy|developer\s*tools|command\s*prompt",RegexOptions.IgnoreCase);
   static readonly Regex PcDenied = new Regex(@"\b(stripe|paypal|venmo|bank(?:ing)?|brokerage|crypto|wallet|password|login|authenticator|uac)\b|cash\s*app|credit\s*card|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)|task\s*manager|registry\s*editor|device\s*manager|control\s*panel|group\s*policy",RegexOptions.IgnoreCase);
+  static readonly HashSet<string> OwnerProtectedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "botdesk","securityhealthhost","credentialuibroker","consent","winlogon","logonui" };
+  static readonly Regex OwnerDenied = new Regex(@"\b(password|login|authenticator|uac)\b|sign\s*in|log\s*in|credential\s*manager|1password|bitwarden|lastpass|keepass|user\s*account\s*control|windows\s*(security|defender)",RegexOptions.IgnoreCase);
+  public static bool OwnerControl = false;
   public static bool PcAccess = false;
   public static HashSet<string> BlockedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
   public static void SetPolicy(string mode,string[] blocked) {
-    if(mode!="pc-access" && mode!="selected-window") throw Block("invalid-access-mode");
+    if(mode!="pc-access" && mode!="selected-window" && mode!="owner-control") throw Block("invalid-access-mode");
     if(blocked==null || blocked.Length>64) throw Block("invalid-blocked-apps");
     var next=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     foreach(string value in blocked) {
       if(value==null || !Regex.IsMatch(value,@"^[a-z0-9][a-z0-9._-]{0,79}$")) throw Block("invalid-blocked-apps");
       next.Add(value);
     }
-    PcAccess=mode=="pc-access"; BlockedApps=next;
+    OwnerControl=mode=="owner-control"; PcAccess=OwnerControl || mode=="pc-access"; BlockedApps=next;
   }
   static readonly HashSet<string> SafeKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ENTER","TAB","ESCAPE","BACKSPACE","DELETE","ARROWUP","ARROWDOWN","ARROWLEFT","ARROWRIGHT","HOME","END","PAGEUP","PAGEDOWN","CTRL+A","CTRL+C","CTRL+X","CTRL+V","CTRL+Z","CTRL+S","ALT+LEFT","ALT+RIGHT","F5","E","W","A","S","D","SPACE" };
   static readonly Dictionary<string,ushort> Keys = new Dictionary<string,ushort>(StringComparer.OrdinalIgnoreCase) {
@@ -151,18 +154,18 @@ public static class BotDeskNative {
   static void BasicCheck(IntPtr hwnd,uint expectedPid,bool foreground) {
     if(Desktop()!="default") throw Block("desktop-blocked");
     string self=Integrity((uint)Process.GetCurrentProcess().Id);
-    if(self!="medium" && self!="low") throw Block("host-integrity-blocked");
+    if(self!="medium" && self!="low" && !(OwnerControl && self=="high")) throw Block("host-integrity-blocked");
     uint pid; GetWindowThreadProcessId(hwnd,out pid);
     if(pid==0 || pid!=expectedPid || !IsWindowVisible(hwnd) || IsIconic(hwnd)) throw Block("target-changed");
     if(foreground && GetForegroundWindow()!=hwnd) throw Block("target-not-foreground");
     var process=Process.GetProcessById((int)pid);
     if(ExpectedProcessStart!=null && process.StartTime.ToUniversalTime().Ticks.ToString()!=ExpectedProcessStart) throw Block("target-changed");
     if(process.SessionId!=Process.GetCurrentProcess().SessionId) throw Block("app-blocked");
-    if(PcAccess ? (PcProtectedApps.Contains(process.ProcessName) || BlockedApps.Contains(process.ProcessName)) : !Apps.Contains(process.ProcessName)) throw Block("app-blocked");
+    if(PcAccess ? ((OwnerControl ? OwnerProtectedApps : PcProtectedApps).Contains(process.ProcessName) || BlockedApps.Contains(process.ProcessName)) : !Apps.Contains(process.ProcessName)) throw Block("app-blocked");
     string integrity=Integrity(pid);
-    if(integrity!="medium" && integrity!="low") throw Block("target-integrity-blocked");
+    if(integrity!="medium" && integrity!="low" && !(OwnerControl && integrity=="high" && self=="high")) throw Block("target-integrity-blocked");
     var title=new StringBuilder(1024); GetWindowText(hwnd,title,title.Capacity);
-    if(title.Length==0 || (PcAccess ? PcDenied : Denied).IsMatch(title.ToString())) throw Block("sensitive-window");
+    if(title.Length==0 || (OwnerControl ? OwnerDenied : PcAccess ? PcDenied : Denied).IsMatch(title.ToString())) throw Block("sensitive-window");
   }
   static void SensitiveCheck(IntPtr hwnd,uint expectedPid,bool requireFocus) {
     var root=AutomationElement.FromHandle(hwnd);
@@ -238,7 +241,7 @@ public static class BotDeskNative {
   public static Dictionary<string,object> LaunchApp(string app) {
     if(!PcAccess || Desktop()!="default") throw Block("pc-access-required");
     string self=Integrity((uint)Process.GetCurrentProcess().Id);
-    if(self!="medium" && self!="low") throw Block("host-integrity-blocked");
+    if(self!="medium" && self!="low" && !(OwnerControl && self=="high")) throw Block("host-integrity-blocked");
     if(app==null || app.Length>1024 || !Regex.IsMatch(app,@"^[a-zA-Z]:\\[^\r\n\0""<>|?*]+\.exe$",RegexOptions.IgnoreCase) || app.Split('\\').Length<2 || Array.Exists(app.Split('\\'),part=>part=="." || part=="..")) throw Block("app-blocked");
     string executable=Path.GetFullPath(app);
     if(BlockedApps.Contains(Path.GetFileNameWithoutExtension(executable))) throw Block("app-blocked");
@@ -320,7 +323,7 @@ public static class BotDeskNative {
     if(element==null || element.Current.ProcessId!=(int)pid || element.Current.IsPassword) throw Block("point-control-blocked");
   }
   public static void Click(string handle,uint pid,int x,int y,string button,int count) {
-    if(PcAccess) throw Block("pc-editing-blocked");
+    if(PcAccess && !OwnerControl) throw Block("pc-editing-blocked");
     IntPtr hwnd=Check(handle,pid,true); PointCheck(hwnd,pid,x,y); ModifiersReleased();
     if(!SetCursorPos(x,y)) throw Block("cursor-failed");
     Check(handle,pid,true); PointCheck(hwnd,pid,x,y);
@@ -428,7 +431,7 @@ public static class BotDeskNative {
     canContinue();
   }
   public static void Drag(string handle,uint pid,string title,int left,int top,int width,int height,int[] xs,int[] ys,int durationMs) {
-    if(PcAccess) throw Block("pc-editing-blocked");
+    if(PcAccess && !OwnerControl) throw Block("pc-editing-blocked");
     if(DragTimingEnabled) DragTimingClock=Stopwatch.StartNew();
     if(String.IsNullOrWhiteSpace(title) || xs==null || ys==null || xs.Length!=ys.Length || xs.Length<2 || xs.Length>64 || durationMs<100 || durationMs>2000 || width<1 || height<1 || width>32768 || height>32768) throw Block("invalid-drag");
     for(int i=0;i<xs.Length;i++) {
@@ -489,7 +492,7 @@ public static class BotDeskNative {
     }
   }
   public static void TypeText(string handle,uint pid,string text) {
-    if(PcAccess) throw Block("pc-editing-blocked");
+    if(PcAccess && !OwnerControl) throw Block("pc-editing-blocked");
     if(String.IsNullOrEmpty(text) || text.Length>4000 || Regex.IsMatch(text,@"[\x00-\x1f\x7f]|(?:javascript|vbscript|data|file|shell|ms-settings|powershell):",RegexOptions.IgnoreCase)) throw Block("invalid-text");
     Check(handle,pid,true); ModifiersReleased();
     foreach(char value in text) {
@@ -501,7 +504,7 @@ public static class BotDeskNative {
   }
   public static void Press(string handle,uint pid,string chord) {
     if(!SafeKeys.Contains(chord??"")) throw Block("key-blocked");
-    if(PcAccess) throw Block("pc-editing-blocked");
+    if(PcAccess && !OwnerControl) throw Block("pc-editing-blocked");
     Check(handle,pid,true); ModifiersReleased();
     var parts=chord.Split('+'); var items=new List<INPUT>();
     foreach(string part in parts) { INPUT down=new INPUT(); down.type=1; down.U.ki.wVk=Keys[part]; items.Add(down); }

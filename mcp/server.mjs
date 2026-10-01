@@ -7,6 +7,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { COMMANDS, CAPABILITY_FLAGS } from '../shared/protocol.mjs';
 import { CONTRACT_VERSION, ERROR_CODES, classifyRelayError, formatBotError } from '../shared/errors.mjs';
+import { readLocalPairing } from './local-config.mjs';
 
 const MAX_RESPONSE_BYTES = 12 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -34,11 +35,11 @@ export const TOOL_DEFS = [
   { name: 'botdesk_move_window', description: 'PC-wide mode only: reposition the currently focused ordinary window without resizing or dragging content. Requires a fresh snapshotId; x/y are absolute virtual-desktop coordinates.', inputSchema: schema({ snapshotId, x: { type: 'integer', minimum: -32768, maximum: 32767 }, y: { type: 'integer', minimum: -32768, maximum: 32767 } }, ['snapshotId', 'x', 'y']) },
   { name: 'botdesk_close_window', description: 'PC-wide mode only: request that the currently focused ordinary window close. Requires a fresh snapshotId. The app may show a save prompt or refuse; closing can discard unsaved work.', inputSchema: schema({ snapshotId }, ['snapshotId']) },
   { name: 'botdesk_launch_app', description: 'PC-wide mode only: start an installed Windows executable by its exact local .exe path, without arguments or a shell. Use the executablePath returned by botdesk_list_windows to restart a running app.', inputSchema: schema({ app: { type: 'string', minLength: 7, maxLength: 1024 } }, ['app']) },
-  { name: 'botdesk_click', description: 'One-window mode only: click x/y pixels relative to the last approved target image. Supports button left|right|middle and count 1|2. A fresh snapshotId is required.', inputSchema: schema({ snapshotId, ...pointProps, button: { type: 'string', enum: ['left', 'right', 'middle'] }, count: { type: 'integer', minimum: 1, maximum: 2 } }, ['snapshotId', 'x', 'y']) },
+  { name: 'botdesk_click', description: 'One-window or Owner control mode: click x/y pixels relative to the last approved target image. Supports button left|right|middle and count 1|2. A fresh snapshotId is required.', inputSchema: schema({ snapshotId, ...pointProps, button: { type: 'string', enum: ['left', 'right', 'middle'] }, count: { type: 'integer', minimum: 1, maximum: 2 } }, ['snapshotId', 'x', 'y']) },
   { name: 'botdesk_move', description: 'Move the cursor to x/y pixels relative to the last approved target image without clicking. Fresh snapshotId required.', inputSchema: schema({ snapshotId, ...pointProps }, ['snapshotId', 'x', 'y']) },
-  { name: 'botdesk_drag', description: 'One-window mode only: bounded left-button drag using a fresh snapshotId. Supply 2–64 distinct consecutive integer points and durationMs 100–2000. Button releases on cancel/STOP/expiry.', inputSchema: schema({ snapshotId, points: { type: 'array', minItems: 2, maxItems: 64, items: schema(pointProps, ['x', 'y']) }, durationMs: { type: 'integer', minimum: 100, maximum: 2000 } }, ['snapshotId', 'points', 'durationMs']) },
-  { name: 'botdesk_type', description: 'One-window mode only: type plain text into the approved target using a fresh snapshotId. Password/sensitive controls are blocked.', inputSchema: schema({ snapshotId, text: { type: 'string', minLength: 1, maxLength: 4000 } }, ['snapshotId', 'text']) },
-  { name: 'botdesk_key', description: 'One-window mode only: press a permitted navigation or editing key in the approved target with a fresh snapshotId. PC-wide mode uses botdesk_close_window instead.', inputSchema: schema({ snapshotId, key: { type: 'string', enum: keys } }, ['snapshotId', 'key']) },
+  { name: 'botdesk_drag', description: 'One-window or Owner control mode: bounded left-button drag using a fresh snapshotId. Supply 2–64 distinct consecutive integer points and durationMs 100–2000. Button releases on cancel/STOP/expiry.', inputSchema: schema({ snapshotId, points: { type: 'array', minItems: 2, maxItems: 64, items: schema(pointProps, ['x', 'y']) }, durationMs: { type: 'integer', minimum: 100, maximum: 2000 } }, ['snapshotId', 'points', 'durationMs']) },
+  { name: 'botdesk_type', description: 'One-window or Owner control mode: type plain text into the approved target using a fresh snapshotId. Password/sensitive controls are blocked.', inputSchema: schema({ snapshotId, text: { type: 'string', minLength: 1, maxLength: 4000 } }, ['snapshotId', 'text']) },
+  { name: 'botdesk_key', description: 'One-window or Owner control mode: press a permitted navigation or editing key in the approved target with a fresh snapshotId. PC-wide mode uses botdesk_close_window instead.', inputSchema: schema({ snapshotId, key: { type: 'string', enum: keys } }, ['snapshotId', 'key']) },
   { name: 'botdesk_scroll', description: 'Scroll the approved target. Provide nonzero deltaY and/or deltaX from -1200 to 1200. Fresh snapshotId required.', inputSchema: schema({ snapshotId, deltaY: { type: 'integer', minimum: -1200, maximum: 1200 }, deltaX: { type: 'integer', minimum: -1200, maximum: 1200 } }, ['snapshotId']) },
   { name: 'botdesk_clipboard_read', description: 'Read plain-text clipboard contents while armed. Secrets-like patterns are redacted from the tool result. Prefer secret-reference workflows when entering credentials.', inputSchema: schema() },
   { name: 'botdesk_clipboard_write', description: 'Write plain text to the clipboard while armed (max 4000 chars). Does not paste; use botdesk_key CTRL+V with a fresh snapshot when needed.', inputSchema: schema({ text: { type: 'string', minLength: 1, maxLength: 4000 } }, ['text']) },
@@ -166,8 +167,10 @@ export function createRelayClient(config, fetchImpl = fetch) {
         capabilities: CAPABILITY_FLAGS,
         limitations: [
           'Cannot bypass Windows UAC or secure desktop.',
-          'Elevated integrity and password controls are blocked.',
-          'Selected-window mode is the default; full-desktop mode requires an explicit owner grant (not yet enabled).',
+          'Password controls, Windows permission screens and the locked desktop are blocked.',
+          'Read status.target.accessMode for the current grant: selected-window, restricted pc-access viewing, or owner-control for coding input.',
+          'Owner control supports elevated apps only when the Windows companion itself runs as administrator.',
+          'When status.operator is owner, wait for the owner to return control to the bot.',
           'Do not replay clicks after timeout, cancel, disconnect or expiry.'
         ],
         errors: ERROR_CODES
@@ -206,7 +209,10 @@ export function createRelayClient(config, fetchImpl = fetch) {
 let defaultClient;
 export async function callRelay(toolName, args = {}) {
   try {
-    defaultClient ||= createRelayClient({ relayUrl: process.env.BOTDESK_RELAY_URL, hostId: process.env.BOTDESK_HOST_ID, botToken: process.env.BOTDESK_BOT_TOKEN, botId: process.env.BOTDESK_BOT_ID });
+    // Re-read explicit local pairing on every call so owner token rotation does
+    // not require copying a new credential or restarting the coding connector.
+    if(process.env.BOTDESK_LOCAL_PAIRING==='1') defaultClient=createRelayClient(readLocalPairing());
+    else defaultClient ||= createRelayClient({ relayUrl: process.env.BOTDESK_RELAY_URL, hostId: process.env.BOTDESK_HOST_ID, botToken: process.env.BOTDESK_BOT_TOKEN, botId: process.env.BOTDESK_BOT_ID });
   } catch (error) {
     if (!error.code) {
       error.code = ERROR_CODES.CREDENTIAL_MISSING;

@@ -1,10 +1,14 @@
 # BotDoor / BotDesk
 
-BotDoor gives an owner-controlled bot access to a Windows PC through the separately running BotDesk companion and a private relay. This branch implements the 1.6 protocol contract; the legacy Electron/npm package name and version remain BotDesk 0.1.0. It is independent software, with no OpenAI or xAI endorsement.
+BotDoor gives an owner-controlled bot access to a Windows PC through the separately running BotDesk companion and a private relay. This branch implements the 1.7 protocol contract; the legacy Electron/npm package name and version remain BotDesk 0.1.0. It is independent software, with no OpenAI or xAI endorsement.
 
 The owner chooses an access scope, grants a time-limited session, and can pause or stop access. One-window mode permits guarded input only in the selected app. PC access permits ordinary-window viewing, focus, scrolling, pointer movement, moving/closing windows and exact-path executable launch; it blocks clicks, typing, content drag, editing keys and clipboard writes. Closing can discard unsaved work; programs can have effects when launched. No absolute no-data-loss guarantee is made.
 
-The PC must remain awake, signed in and unlocked with its companion running. It cannot unlock Windows or operate UAC/secure-desktop or elevated/sensitive windows. Local STOP and Ctrl+Shift+F12 revoke access. Every input needs a fresh snapshot; stale or changed targets require owner recovery, never automatic substitution.
+Explicit **Owner control** adds coding apps, clicks, typing, drag and editing keys. The phone's **Take control** starts a manual session that blocks bot input; **Return to bot** invalidates old snapshots. The viewer refreshes the foreground window and provides tap, type, keys, scrolling, window selection, close and exact-path program launch. It is not full-desktop video. Old settings are never silently upgraded.
+
+The PC must remain awake, signed in and unlocked with its companion running. Administrator apps require the companion itself to run as administrator using normal local Windows consent. It cannot unlock Windows or operate UAC/secure desktop or password controls. Local STOP and Ctrl+Shift+F12 revoke access. Every input needs a fresh snapshot; stale or changed targets require owner recovery.
+
+For a connector on this Windows PC, explicitly set `BOTDESK_LOCAL_PAIRING=1` to reuse the saved encrypted bot credential without copying codes; rotations are read on the next call. Remote runners still need one-time private credential setup. See [Owner control release and acceptance](docs/OWNER-CONTROL-2026-10-01.md). This candidate has not been installed or deployed.
 
 ## Setup and tools
 

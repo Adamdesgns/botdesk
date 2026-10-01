@@ -30,7 +30,7 @@ export function classifyWindow(window = {}) {
     if (patterns.some((pattern) => pattern.test(joined))) return reject(category, `${category} windows are off-limits.`);
   }
   const integrity = String(window.integrity || '').toLowerCase();
-  if (!['low', 'medium'].includes(integrity)) return reject(integrity === 'unknown' || !integrity ? 'unknown-integrity' : 'elevated', 'The target must have verified ordinary Windows privileges.');
+  if (!['low','medium'].includes(integrity)) return reject(integrity === 'unknown' || !integrity ? 'unknown-integrity' : 'elevated', 'The target must have verified ordinary Windows privileges.');
   if (window.desktop !== 'default') return reject('desktop-blocked', 'The normal unlocked interactive desktop is required.');
   if (window.automationChecked !== true) return reject('automation-unavailable', 'Windows could not verify the target controls.');
   if (window.passwordFocused !== false || window.passwordPresent !== false) return reject('credential', 'Password controls are off-limits.');
@@ -43,19 +43,19 @@ export function isAllowedWindow(window, allowedApps = DEFAULT_APP_ALLOWLIST) {
   return SUPPORTED_APP_ALLOWLIST.includes(app) && Array.isArray(allowedApps) &&
     allowedApps.map(normalizeApp).includes(app) && classifyWindow(window).allowed;
 }
-export function classifyPcWindow(window = {}, blockedApps = []) {
+export function classifyPcWindow(window = {}, blockedApps = [], ownerControl = false) {
   const joined = [window.processName, window.title].filter(Boolean).join(' ');
-  for (const [category, patterns] of Object.entries(PC_PROTECTED_PATTERNS)) {
+  for (const [category, patterns] of Object.entries(ownerControl ? {credential:DENY_PATTERNS.credential,system:[/user\s*account\s*control/i,/windows\s*security/i,/windows\s*defender/i]} : PC_PROTECTED_PATTERNS)) {
     if (patterns.some(pattern => pattern.test(joined))) return reject(category, `${category} windows are off-limits.`);
   }
   const integrity = String(window.integrity || '').toLowerCase();
-  if (!['low', 'medium'].includes(integrity)) return reject(integrity === 'unknown' || !integrity ? 'unknown-integrity' : 'elevated', 'The target must have verified ordinary Windows privileges.');
+  if (!(ownerControl ? ['low','medium','high'] : ['low','medium']).includes(integrity)) return reject(integrity === 'unknown' || !integrity ? 'unknown-integrity' : 'elevated', 'The target privilege level is unavailable or outside the selected policy.');
   if (window.desktop !== 'default') return reject('desktop-blocked', 'The normal unlocked interactive desktop is required.');
   if (window.automationChecked !== true) return reject('automation-unavailable', 'Windows could not verify the target controls.');
   if (window.passwordFocused !== false || window.passwordPresent !== false) return reject('credential', 'Password controls are off-limits.');
   if (!window.handle || !Number.isInteger(window.processId) || window.processId <= 0 || !window.processName || !window.title) return reject('unknown-window', 'The target window could not be verified.');
   const app = normalizeApp(window.processName);
-  if (PC_PROTECTED_APPS.has(app) || blockedApps.map(normalizeApp).includes(app)) return reject('app-blocked', 'This app is blocked for PC access.');
+  if ((ownerControl ? ['botdesk','securityhealthhost','credentialuibroker','consent','winlogon','logonui'].includes(app) : PC_PROTECTED_APPS.has(app)) || blockedApps.map(normalizeApp).includes(app)) return reject('app-blocked', 'This app is blocked for PC access.');
   return { allowed: true, category: 'ordinary', reason: '' };
 }
 export function validateCommand(name, args = {}, context = {}) {
@@ -66,7 +66,8 @@ export function validateCommand(name, args = {}, context = {}) {
   if (name === 'list_monitors') return { allowed: true };
   const target = context.targetWindow;
   const foreground = context.foreground || {};
-  const pcAccess = context.accessMode === 'pc-access';
+  const ownerControl = context.accessMode === 'owner-control';
+  const pcAccess = ownerControl || context.accessMode === 'pc-access';
   if (name === 'launch_app') {
     if (!pcAccess) return reject('pc-access-required', 'Program launching requires PC access mode.');
     if (!args || Object.keys(args).length !== 1 || typeof args.app !== 'string' || args.app.length > 1024 ||
@@ -78,14 +79,14 @@ export function validateCommand(name, args = {}, context = {}) {
   }
   if ((name === 'move_window' || name === 'close_window') && !pcAccess)
     return reject('pc-access-required', 'Window management requires PC access mode.');
-  if (pcAccess && ['click', 'drag', 'type', 'clipboard_write', 'key'].includes(name)) {
+  if (pcAccess && !ownerControl && ['click', 'drag', 'type', 'clipboard_write', 'key'].includes(name)) {
     return reject('pc-editing-blocked', 'PC access permits pointer movement, viewing, scrolling, window management and named program launches, but no editing controls.');
   }
   if (pcAccess) {
     if (name === 'list_windows') return { allowed: true };
     if (name === 'clipboard_read' || name === 'clipboard_write') return reject('pc-clipboard-unavailable', 'Clipboard access is unavailable in PC access mode.');
-    if (name === 'focus') return classifyPcWindow(target, context.blockedApps);
-    const verdict = classifyPcWindow(foreground, context.blockedApps);
+    if (name === 'focus') return classifyPcWindow(target, context.blockedApps, ownerControl);
+    const verdict = classifyPcWindow(foreground, context.blockedApps, ownerControl);
     if (!verdict.allowed) return verdict;
   } else if (!target?.handle || !Number.isInteger(target.processId)) return reject('target-required', 'Choose a target window on the PC first.');
   if (!pcAccess && name === 'focus') {

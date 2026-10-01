@@ -4,7 +4,7 @@ export const SETUP_STEPS = Object.freeze(['pair', 'window', 'phone']);
 export function deriveReadiness(config = {}, status = {}) {
   const paired = Boolean(config.relayUrl && config.hostId && config.hostToken === 'saved' && config.ownerToken === 'saved');
   const connected = status.relay?.authenticated === true;
-  const pcAccess = config.accessMode === 'pc-access';
+  const pcAccess = ['pc-access','owner-control'].includes(config.accessMode);
   const selected = pcAccess || Boolean(status.targetWindow?.handle && Number.isInteger(status.targetWindow?.processId) && status.targetWindow.processId > 0);
   const remoteEnabled = config.allowRemoteArm === true;
   const completed = { pair: paired && connected, window: selected, phone: paired && remoteEnabled };

@@ -33,6 +33,43 @@ function setup(t, config = {}) {
   return { controller, executor, settings, events, calls, command, arm, capture, advance: (ms) => { now += ms; }, changeWindow: (update) => { foreground = { ...foreground, ...update }; } };
 }
 
+test('Owner control types in coding apps, preserves snapshots and denies bot during phone takeover',async t=>{
+ const s=setup(t,{accessMode:'owner-control',blockedApps:[],allowRemoteArm:true});
+ s.changeWindow({processName:'code',title:'Owner project - Visual Studio Code'});
+ assert.equal(s.controller.getStatus().scope.editingAllowed,true);
+ await s.controller.applyOwnerState({mode:'armed',operator:'owner',expiresAt:100000,controlGeneration:1});
+ assert.equal(s.controller.getStatus().operator,'owner');
+ assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'owner-has-control');
+ const snapshotId=await s.capture('owner-preview');
+ assert.equal((await s.controller.runCommand(s.command('type',{snapshotId,text:'start a coding session'},{botId:'owner-preview'}))).ok,true);
+ assert.equal(s.calls.at(-1).args.accessMode,'owner-control');
+ assert.equal((await s.controller.runCommand(s.command('key',{snapshotId,key:'ENTER'},{botId:'owner-preview'}))).error,'fresh-snapshot-required');
+ const fresh=await s.capture('owner-preview');s.controller.emergencyStop();
+ assert.equal((await s.controller.runCommand(s.command('click',{snapshotId:fresh,x:1,y:1},{botId:'owner-preview'}))).ok,false);
+ assert.equal((await s.controller.applyOwnerState({mode:'armed',operator:'owner',expiresAt:100000,controlGeneration:2})).error,'local-stop-latched');
+});
+test('Owner control policy changes revoke prior bot snapshots and high/system privilege is bounded',async t=>{
+ const s=setup(t,{accessMode:'owner-control',blockedApps:[],allowRemoteArm:true});s.arm();
+ s.changeWindow({processName:'pwsh',title:'PowerShell',integrity:'high'});
+ const snapshotId=await s.capture();
+ assert.equal((await s.controller.runCommand(s.command('type',{snapshotId,text:'Get-Location'}))).ok,true);
+ s.changeWindow({integrity:'system'});
+ assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'elevated');
+ s.changeWindow({integrity:'high',desktop:'winlogon'});
+ assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'desktop-blocked');
+ s.changeWindow({desktop:'default',passwordPresent:true});
+ assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'credential');
+ s.controller.setAccessPolicy({accessMode:'pc-access',blockedApps:[]});
+ assert.equal(s.controller.mode,'off');assert.equal(s.controller.getStatus().scope.editingAllowed,false);
+});
+test('owner input requires explicit takeover; restricted viewing cannot become manual control',async t=>{
+ const s=setup(t,{accessMode:'owner-control',blockedApps:[],allowRemoteArm:true});s.arm();
+ const id=await s.capture('owner-preview');
+ assert.equal((await s.controller.runCommand(s.command('click',{snapshotId:id,x:1,y:1},{botId:'owner-preview'}))).error,'take-control-first');
+ s.controller.setAccessPolicy({accessMode:'pc-access',blockedApps:[]});
+ assert.equal((await s.controller.applyOwnerState({mode:'armed',operator:'owner',expiresAt:100000,controlGeneration:2})).error,'owner-control-required');
+});
+
 test('controller starts off; target selection and an armed session are required', async (t) => {
   const s = setup(t);
   assert.equal(s.controller.getStatus().mode, 'off');

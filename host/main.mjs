@@ -50,10 +50,10 @@ function handle(name,fn,{allowOverlay=false}={}){
 function installIpc(){
   handle('get-state',async()=>{if(!controller.operation)await controller.revalidateTarget();return {status:controller.getStatus(),config:configStore.publicView(),version:app.getVersion()};});
   handle('windows',async()=>{const config=configStore.load();const result=await listWindows({accessMode:config.accessMode,blockedApps:config.blockedApps});
-    choices=(result.windows||[]).filter(w=>config.accessMode==='pc-access'?classifyPcWindow(w,config.blockedApps).allowed:isAllowedWindow(w,config.allowedApps));
+    choices=(result.windows||[]).filter(w=>['pc-access','owner-control'].includes(config.accessMode)?classifyPcWindow(w,config.blockedApps,config.accessMode==='owner-control').allowed:isAllowedWindow(w,config.allowedApps));
     return {ok:result.ok,windows:choices,error:result.error};});
   handle('select-window',async handle=>{
-    if(configStore.load().accessMode==='pc-access')throw new Error('PC access does not require a selected window.');
+    if(['pc-access','owner-control'].includes(configStore.load().accessMode))throw new Error('PC access does not require a selected window.');
     const target=choices.find(w=>w.handle===handle&&isAllowedWindow(w,configStore.load().allowedApps));if(!target)throw new Error('Refresh and choose an available window.');
     controller.selectTarget(target);const valid=await controller.revalidateTarget();if(!valid.ok)throw new Error(valid.error);return {ok:true,status:controller.getStatus()};
   });
@@ -70,7 +70,7 @@ function installIpc(){
       return {ok:true,status};
     }
     if(input?.mode!=='armed')throw new Error('invalid-mode');
-    const pcAccess=configStore.load().accessMode==='pc-access';
+    const pcAccess=['pc-access','owner-control'].includes(configStore.load().accessMode);
     if(!controller.targetWindow&&!pcAccess)throw new Error('Choose a window first.');
     if(controller.stopLatched)throw new Error('Unlock the local stop first.');
     const epoch=controller.epoch;

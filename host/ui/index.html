@@ -50,6 +50,7 @@
 
         <div class="step-panel" data-panel="window" id="windowPanel" role="tabpanel" aria-labelledby="windowTab" hidden>
           <div class="panel-heading"><span class="step-label">STEP 02</span><h3>Choose app access.</h3><p>Use one selected window, or allow ordinary apps across this PC except those you block. Access remains off until you go live.</p></div>
+          <label class="toggle-row" for="ownerControl"><span><strong>Owner control — coding and administrator apps</strong><small>Allows editing and commands in coding apps. Elevated apps require launching BotDoor as administrator. Windows lock and permission screens remain unavailable.</small></span><input id="ownerControl" type="checkbox"></label>
           <label class="toggle-row" for="pcAccess"><span><strong>PC access across unblocked apps</strong><small>No window selection needed. Protected and elevated windows remain off-limits.</small></span><input id="pcAccess" type="checkbox"></label>
           <label for="blockedApps">Apps the bot cannot use<input id="blockedApps" placeholder="discord, steam" spellcheck="false"></label>
           <button id="saveAccessPolicy" class="button ink" type="button">Save access rules</button>

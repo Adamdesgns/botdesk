@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "botdoor": {
+      "command": "node",
+      "args": ["C:/path/to/botdoor-plugin/runtime/server.mjs"],
+      "env": {
+        "BOTDESK_LOCAL_PAIRING": "1",
+        "BOTDESK_BOT_ID": "local-coding-bot"
+      }
+    }
+  }
+}

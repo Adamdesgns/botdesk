@@ -14,10 +14,10 @@ export class HostController extends EventEmitter {
     super(); Object.assign(this, {configStore, auditLog, executor, clock});
     this.mode='off'; this.expiresAt=null; this.activeBot=null; this.leaseEndsAt=0;
     this.relayStatus={connected:false, authenticated:false}; this.relay=null;
-    this.targetWindow=null; this.snapshots=new Map(); this.epoch=0; this.controlGeneration=null;
+    this.targetWindow=null; this.snapshots=new Map(); this.epoch=0; this.controlGeneration=null; this.operator='bot';
     this.operation=null; this.expiryTimer=null; this.seen=new Set(); this.stopLatched=false; this.inputSafetyFault=null;
     this.recording=false; this.recordAbort=null;
-    this.targetHealth={state:configStore.load().accessMode==='pc-access'?'pc-access':'missing',checkedAt:null,reason:null}; this.targetDeadline=null;
+    this.targetHealth={state:['pc-access','owner-control'].includes(configStore.load().accessMode)?'pc-access':'missing',checkedAt:null,reason:null}; this.targetDeadline=null;
     this.recovery=new TargetRecovery(this); this.ownerOperation=false;
   }
   attachRelay(relay) {
@@ -26,7 +26,7 @@ export class HostController extends EventEmitter {
       this.relayStatus=status;
       if (!status.authenticated) this.setMode('off', {source:'relay-disconnected',notify:this.mode!=='off'});
       if (!status.authenticated) this.recovery.clear();
-      if (status.authenticated && this.configStore.load().accessMode !== 'pc-access') void this.revalidateTarget();
+      if (status.authenticated && !['pc-access','owner-control'].includes(this.configStore.load().accessMode)) void this.revalidateTarget();
       this.emitStatus();
     });
   }
@@ -38,8 +38,8 @@ export class HostController extends EventEmitter {
       relay:this.relayStatus, stopLatched:this.stopLatched, inputSafetyFault:this.inputSafetyFault, targetWindow:this.targetWindow,
       targetHealth:this.targetHealth, targetDeadline:this.targetDeadline,
       allowRemoteArm:Boolean(config.allowRemoteArm), hostId:config.hostId||null,
-      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:config.accessMode==='pc-access',clipboard:config.accessMode!=='pc-access',launchApplications:config.accessMode==='pc-access'},
-      scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:config.accessMode==='pc-access', editingAllowed:config.accessMode!=='pc-access', blockedApps:config.blockedApps}};
+      contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:['pc-access','owner-control'].includes(config.accessMode),clipboard:!['pc-access','owner-control'].includes(config.accessMode),launchApplications:['pc-access','owner-control'].includes(config.accessMode)},
+      operator:this.operator, scope:{mode:this.mode, expiresAt:this.expiresAt, selectedWindow:Boolean(this.targetWindow), fullDesktop:['pc-access','owner-control'].includes(config.accessMode), editingAllowed:config.accessMode!=='pc-access', blockedApps:config.blockedApps}};
   }
   selectTarget(window, {temporary=false,notify=true}={}) {
     this.setMode('off', {source:'target-changed',notify}); this.targetWindow=window ? structuredClone(window) : null;
@@ -53,7 +53,7 @@ export class HostController extends EventEmitter {
     return fail('target-reselect-required',reason);
   }
   async revalidateTarget(options) {
-    if(this.configStore.load().accessMode==='pc-access')return {ok:true};
+    if(['pc-access','owner-control'].includes(this.configStore.load().accessMode))return {ok:true};
     const target=this.targetWindow, epoch=this.epoch;
     if(!target)return fail('target-required');
     let current;
@@ -74,20 +74,20 @@ export class HostController extends EventEmitter {
     finally{this.ownerOperation=false;}
   }
   setAccessPolicy({accessMode,blockedApps},{notify=true}={}) {
-    if(!['selected-window','pc-access'].includes(accessMode))throw new Error('invalid-access-mode');
+    if(!['selected-window','pc-access','owner-control'].includes(accessMode))throw new Error('invalid-access-mode');
     const normalized=normalizeBlockedApps(blockedApps);
     this.setMode('off',{source:'access-policy-changed',notify});
     this.targetWindow=null;this.targetDeadline=null;this.snapshots.clear();this.recovery.clear();
     this.configStore.save({accessMode,blockedApps:normalized});
-    this.targetHealth={state:accessMode==='pc-access'?'pc-access':'missing',checkedAt:this.clock(),reason:null};
+    this.targetHealth={state:['pc-access','owner-control'].includes(accessMode)?'pc-access':'missing',checkedAt:this.clock(),reason:null};
     this.emitStatus();return this.getStatus();
   }
   whenIdle() { return this.idlePromise || Promise.resolve(); }
   clearLocalStop() { if(this.inputSafetyFault)throw new Error(this.inputSafetyFault);this.stopLatched=false; this.emitStatus(); }
-  setMode(mode, {minutes=480, expiresAt, source='local', generation, notify=true}={}) {
+  setMode(mode, {minutes=480, expiresAt, source='local', generation, operator='bot', notify=true}={}) {
     if (!['off','armed','paused'].includes(mode)) throw new Error('invalid-mode');
     if(mode==='armed'&&this.inputSafetyFault)throw new Error(this.inputSafetyFault);
-    if (mode==='armed' && (this.stopLatched||(!this.targetWindow&&this.configStore.load().accessMode!=='pc-access'))) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
+    if (mode==='armed' && (this.stopLatched||(!this.targetWindow&&!['pc-access','owner-control'].includes(this.configStore.load().accessMode)))) throw new Error(this.stopLatched?'local-stop-latched':'select-a-window-first');
     if(mode==='armed'&&this.targetDeadline&&this.clock()>=this.targetDeadline)throw new Error('temporary-target-expired');
     this.recovery.clear();
     if(mode!=='armed'&&this.targetDeadline){
@@ -96,7 +96,7 @@ export class HostController extends EventEmitter {
     }
     this.epoch++; this.operation?.abort(); this.snapshots.clear();
     this.mode=mode; this.activeBot=null; this.leaseEndsAt=0; clearTimeout(this.expiryTimer);
-    this.controlGeneration=generation??null;
+    this.controlGeneration=generation??null; this.operator=mode==='armed'&&operator==='owner'?'owner':'bot';
     this.expiresAt=mode==='armed'?Math.min(expiresAt||Infinity,this.clock()+clampArmMinutes(minutes)*60_000,this.targetDeadline||Infinity):null;
     if (this.expiresAt) {
       this.expiryTimer=setTimeout(()=>this.setMode('off',{source:'expiry'}),Math.max(1,this.expiresAt-this.clock()));
@@ -107,13 +107,14 @@ export class HostController extends EventEmitter {
     if (notify && mode!=='armed') this.relay?.send({type:'local_state',mode,expiresAt:null,controlGeneration:this.controlGeneration,source:this.stopLatched?'emergency':source});
     this.emitStatus(); return this.getStatus();
   }
-  async applyOwnerState({mode,minutes=480,expiresAt,requestId,controlGeneration}) {
+  async applyOwnerState({mode,minutes=480,expiresAt,requestId,controlGeneration,operator='bot'}) {
     let result;
     try {
       if (mode==='armed') {
+        if(operator==='owner'&&this.configStore.load().accessMode!=='owner-control')throw new Error('owner-control-required');
         if (!this.configStore.load().allowRemoteArm) throw new Error('remote-arm-disabled');
         if (this.stopLatched) throw new Error('local-stop-latched');
-        const pcAccess=this.configStore.load().accessMode==='pc-access';
+        const pcAccess=['pc-access','owner-control'].includes(this.configStore.load().accessMode);
         if (!this.targetWindow&&!pcAccess) throw new Error('select-a-window-first');
         if (!Number.isFinite(expiresAt)||expiresAt<=this.clock()) throw new Error('expired-arm-request');
         const epoch=this.epoch;
@@ -126,22 +127,24 @@ export class HostController extends EventEmitter {
           if(!focused.ok)throw new Error(focused.error||'focus-refused');
         }
       }
-      this.setMode(mode,{minutes,expiresAt,source:'owner-remote',generation:controlGeneration,notify:false});
+      this.setMode(mode,{minutes,expiresAt,source:'owner-remote',generation:controlGeneration,operator,notify:false});
       result={ok:true,mode:this.mode,expiresAt:this.expiresAt};
     } catch(error) { result={ok:false,mode:this.mode,expiresAt:this.expiresAt,error:error.message}; }
     this.relay?.send({type:'owner_state_result',requestId,controlGeneration,...result}); return result;
   }
   async runCommand({commandId,name,args={},botId='remote-bot',controlGeneration,expiresAt}) {
     const access=this.configStore.load();
-    const pcAccess=access.accessMode==='pc-access';
+    const pcAccess=['pc-access','owner-control'].includes(access.accessMode);
     if(name==='status' || name==='capabilities') return {ok:true,result:name==='capabilities'?{
       contractVersion:CONTRACT_VERSION, capabilities:{...CAPABILITY_FLAGS,fullDesktopMode:pcAccess,clipboard:!pcAccess,launchApplications:pcAccess}, mode:this.mode, expiresAt:this.expiresAt,
-      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, editingAllowed:!pcAccess, blockedApps:access.blockedApps},
-      limitations:['Cannot bypass UAC or secure desktop.','Elevated and password controls are blocked.',...(pcAccess?['PC access permits pointer movement, viewing, scrolling, moving and closing ordinary windows, and launching an existing local executable by exact path. Editing controls remain blocked.']:[])]
+      scope:{selectedWindow:Boolean(this.targetWindow), fullDesktop:pcAccess, editingAllowed:access.accessMode!=='pc-access', blockedApps:access.blockedApps},
+      limitations:['Cannot bypass UAC or secure desktop.',access.accessMode==='owner-control'?'Elevated apps require BotDoor itself to run as administrator. Password controls remain blocked.':'Elevated and password controls are blocked.',...(access.accessMode==='pc-access'?['PC access permits pointer movement, viewing, scrolling, moving and closing ordinary windows, and launching an existing local executable by exact path. Editing controls remain blocked.']:[])]
     }:this.getStatus()};
     if(name==='stop_all') {this.setMode('off',{source:'bot-stop'});return {ok:true,result:this.getStatus()};}
     if(name==='record_stop') {if(this.operationName==='record_start')this.operation?.abort();return {ok:true,result:await this.stopRecording()};}
     if(typeof commandId!=='string'||!/^[a-zA-Z0-9-]{8,80}$/.test(commandId)||!Number.isFinite(expiresAt)||!Number.isInteger(controlGeneration))return fail('invalid-command-envelope');
+    if(this.operator==='owner'&&botId!=='owner-preview')return fail('owner-has-control');
+    if(botId==='owner-preview'&&!['screenshot','snapshot','list_windows','list_monitors'].includes(name)&&this.operator!=='owner')return fail('take-control-first');
     if(this.operation||this.ownerOperation) return fail('host-busy');
     if(commandId&&this.seen.has(commandId)) return fail('command-replayed');
     if(commandId) {this.seen.add(commandId);if(this.seen.size>2000)this.seen.delete(this.seen.values().next().value);}
@@ -272,6 +275,7 @@ export class HostController extends EventEmitter {
     const w=status.targetWindow;
       this.relay?.send({type:'target_status',target:{...status.targetHealth,temporaryUntil:status.targetDeadline,
       accessMode:this.configStore.load().accessMode,blockedApps:this.configStore.load().blockedApps,
+      operator:this.operator,
       window:w?{title:w.title,processName:w.processName,processId:w.processId,handle:w.handle}:null}});
   }
 }

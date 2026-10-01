@@ -87,6 +87,7 @@ export class BotDeskSession extends DurableObject<Env> {
   private scheduleError: string | null = null;
   private ownerTransition: number | null = null;
   private target: RecordValue | null = null;
+  private operator: 'bot' | 'owner' = 'bot';
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
@@ -134,20 +135,23 @@ export class BotDeskSession extends DurableObject<Env> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
     const mode = normalizeMode(body.mode);
     if (!mode || mode === 'running') return json({ error: 'invalid-mode' }, 400);
+    if (body.operator !== undefined && !['bot','owner'].includes(String(body.operator))) return json({error:'invalid-operator'},400);
+    if (body.operator === 'owner' && this.target?.accessMode !== 'owner-control') return json({error:'owner-control-required'},409);
     const replay = this.reserveId(requestId, mode !== 'armed'); if (replay) return replay;
-    if (mode === 'armed' && this.pending) return json({ error: 'host-busy' }, 409);
+    if (mode === 'armed' && this.pending && !(body.operator === 'owner' && this.pending.kind === 'command')) return json({ error: 'host-busy' }, 409);
     this.forceOff(mode === 'armed' ? 'arm-requested' : `owner-${mode}`);
+    this.operator = mode === 'armed' && body.operator === 'owner' ? 'owner' : 'bot';
     const generation = this.generation;
     this.ownerTransition = generation;
     if (mode !== 'armed') this.sendSafetyOff(`owner-${mode}`);
     const targetLimit = typeof this.target?.temporaryUntil === 'number' ? this.target.temporaryUntil : Infinity;
     const expiresAt = mode === 'armed' ? Math.min(Date.now() + clampMinutes(body.minutes) * 60_000, targetLimit) : null;
-    const saved = expiresAt ? { id: crypto.randomUUID(), startsAt: Date.now(), endsAt: expiresAt } : null;
+    const saved = expiresAt && this.operator === 'bot' ? { id: crypto.randomUUID(), startsAt: Date.now(), endsAt: expiresAt } : null;
     try {
       await this.replaceSchedule(saved);
       if (this.generation !== generation) return json({ error: 'state-superseded' }, 409);
       if (!this.host) return json({ ...this.status(), confirmed: false, saved: Boolean(saved) }, saved ? 202 : 200);
-      const responsePromise = this.sendAndWait('state', { type: 'owner_state', requestId, mode, minutes: clampMinutes(body.minutes), expiresAt, controlGeneration: this.generation }, requestId, mode, expiresAt);
+      const responsePromise = this.sendAndWait('state', { type: 'owner_state', requestId, mode, operator:this.operator, minutes: clampMinutes(body.minutes), expiresAt, controlGeneration: this.generation }, requestId, mode, expiresAt);
       this.ownerTransition = null;
       const response = await responsePromise;
       if (saved) await this.completeScheduleAttempt(saved, response.clone());
@@ -226,7 +230,8 @@ export class BotDeskSession extends DurableObject<Env> {
     if (!['owner', 'bot'].includes(role) || !await this.authorized(token, role)) return json({ error: 'unauthorized' }, 401);
     const name = body.name;
     if (typeof name !== 'string' || !COMMANDS.has(name) || (body.args !== undefined && !isRecord(body.args))) return json({ error: 'invalid-command' }, 400);
-    if (role === 'owner' && !['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'stop_all', 'record_stop'].includes(name)) return json({ error: 'owner-command-blocked' }, 403);
+    if (role === 'owner' && !['status', 'capabilities', 'screenshot', 'snapshot', 'list_windows', 'list_monitors', 'stop_all', 'record_stop'].includes(name) && (this.operator !== 'owner' || this.target?.accessMode !== 'owner-control')) return json({ error: 'owner-command-blocked' }, 403);
+    if (role === 'bot' && this.operator === 'owner' && !['status','stop_all','record_stop'].includes(name)) return json({error:'owner-has-control'},409);
     if (role === 'bot' && (!/^[A-Za-z0-9_-]{1,80}$/.test(botId) || botId === 'owner-preview')) return json({ error: 'invalid-bot-id' }, 400);
     const replay = this.reserveId(requestId, name === 'stop_all' || name === 'record_stop'); if (replay) return replay;
     if (name === 'status') return json({ ok: true, result: this.status() });
@@ -250,7 +255,7 @@ export class BotDeskSession extends DurableObject<Env> {
     if (!await this.authorized(token, 'owner')) return json({ error: 'unauthorized' }, 401);
     if (!['list', 'approve', 'policy'].includes(String(body.action)) ||
       (body.action === 'approve' && (typeof body.candidateId !== 'string' || !REQUEST_ID.test(body.candidateId) || typeof body.temporary !== 'boolean')) ||
-      (body.action === 'policy' && (!['selected-window', 'pc-access'].includes(String(body.accessMode)) ||
+      (body.action === 'policy' && (!['selected-window', 'pc-access', 'owner-control'].includes(String(body.accessMode)) ||
         !Array.isArray(body.blockedApps) || body.blockedApps.length > 64 ||
         body.blockedApps.some(name => typeof name !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,79}$/.test(name)))))
       return json({ error: 'invalid-target-action' }, 400);
@@ -306,7 +311,7 @@ export class BotDeskSession extends DurableObject<Env> {
       schedule: this.schedule ? { startsAt: this.schedule.startsAt, endsAt: this.schedule.endsAt } : null,
       schedulePending: Boolean(this.schedule && (Date.now() < this.schedule.startsAt || !['armed', 'running'].includes(this.state.mode))),
       liveEndsAt: this.state.expiresAt, scheduleError: this.scheduleError, target: this.host ? this.target : null,
-      relayContractVersion: '1.6.0' };
+      operator:this.operator, relayContractVersion: '1.7.0' };
   }
   private refreshState(): void {
     const current = effectiveState(this.state);
@@ -331,6 +336,7 @@ export class BotDeskSession extends DurableObject<Env> {
     if (pending) { clearTimeout(pending.timer); pending.resolve(response); }
   }
   private forceOff(reason: string): void {
+    this.operator = 'bot';
     this.generation++; clearTimeout(this.expiryTimer);
     this.state = { ...DEFAULT_STATE, hostLastSeen: this.state.hostLastSeen };
     this.settle(json({ error: reason }, 409));
@@ -362,7 +368,7 @@ export class BotDeskSession extends DurableObject<Env> {
       this.target = { state: t.state, checkedAt: typeof t.checkedAt === 'number' ? t.checkedAt : null,
         reason: typeof t.reason === 'string' ? t.reason.slice(0, 160) : null,
         temporaryUntil: typeof t.temporaryUntil === 'number' ? t.temporaryUntil : null,
-        accessMode: t.accessMode === 'pc-access' ? 'pc-access' : 'selected-window',
+        accessMode: ['pc-access','owner-control'].includes(String(t.accessMode)) ? t.accessMode : 'selected-window',
         blockedApps: Array.isArray(t.blockedApps) ? t.blockedApps.filter(name => typeof name === 'string' && /^[a-z0-9][a-z0-9._-]{0,79}$/.test(name)).slice(0, 64) : [],
         window: w ? { title: String(w.title || '').slice(0, 1024), processName: String(w.processName || '').slice(0, 80),
           processId: w.processId, handle: String(w.handle || '').slice(0, 20) } : null };

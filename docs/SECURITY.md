@@ -1,5 +1,15 @@
 # Security boundaries
 
+## Current 1.7 Owner control addition
+
+The owner can explicitly select Owner control for coding apps, terminals and editing. Its native helper permits elevated targets only when it also runs elevated. System integrity, Windows Security, UAC/secure desktop and password controls remain blocked. Old viewing/selected-window policies keep their existing restrictions. No UAC policy or startup task is changed. Owner control is not a security sandbox: code execution can change or delete files.
+
+Phone Take control cancels the previous bot session and excludes bot input at both relay and host. Return to bot creates another session; old phone snapshots cannot be reused. Manual sessions have no reconnect schedule. The viewer refreshes the foreground window, with fresh single-use image coordinates, visibility/state cancellation and a fixed STOP button. It is not full-desktop video.
+
+Explicit BOTDESK_LOCAL_PAIRING=1 reads only the saved bot credential under the same Windows user/profile. Direct DPAPI and Chromium v10 encrypted storage are supported; unknown formats fail closed. No owner/host credential is decrypted or returned, and no code is sent to chat. Remote runners still require their own persistent private setup.
+
+See [Owner control release and validation](OWNER-CONTROL-2026-10-01.md). The following sections describe the historical selected-window and restricted PC-viewing design; claims that all editors/elevated apps are blocked apply to those modes, not the explicitly granted Owner control mode. Historical deployment versions below are not current runtime claims.
+
 BotDesk is remote control software for an owner-authorized Windows session. Its app and sensitive-window checks reduce accidental access; they are not a Windows security sandbox or a guarantee against an untrusted bot.
 
 In the local 1.5 PC-wide viewing build, click, drag, type, clipboard and editing keys are rejected by both the host guard and native helper. The bot may inspect, focus, scroll and close ordinary windows. Closing can discard unsaved work, so this is not a guarantee that no data can be lost. The deployed 1.4 host has not been replaced by this local build.

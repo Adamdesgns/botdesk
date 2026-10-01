@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "botdoor",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Owner-controlled access to a Windows PC through the BotDoor companion.",
   "author": { "name": "Adam Designs" },
   "keywords": ["windows", "remote-access", "owner-controls"],

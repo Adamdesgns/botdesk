@@ -35,7 +35,7 @@ export class ConfigStore{
     }
     if(!Array.isArray(result.allowedApps))throw new Error('Invalid app list.');
     result.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>result.allowedApps.includes(x));
-    if(!['selected-window','pc-access'].includes(result.accessMode))throw new Error('Invalid access mode.');
+    if(!['selected-window','pc-access','owner-control'].includes(result.accessMode))throw new Error('Invalid access mode.');
     result.blockedApps=normalizeBlockedApps(result.blockedApps);
     return result;
   }
@@ -53,7 +53,7 @@ export class ConfigStore{
     next.allowRemoteArm=next.allowRemoteArm===true;next.startAtLogin=next.startAtLogin===true;
     if(!Array.isArray(next.allowedApps))throw new Error('Invalid app list.');
     next.allowedApps=SUPPORTED_APP_ALLOWLIST.filter(x=>next.allowedApps.includes(x));
-    if(!['selected-window','pc-access'].includes(next.accessMode))throw new Error('Invalid access mode.');
+    if(!['selected-window','pc-access','owner-control'].includes(next.accessMode))throw new Error('Invalid access mode.');
     next.blockedApps=normalizeBlockedApps(next.blockedApps);
     const stored={...next};
     for(const key of SECRETS){

@@ -10,7 +10,7 @@ const folder = fileURLToPath(new URL('../dist/botdoor-plugin/', import.meta.url)
 const manifest = JSON.parse(await readFile(resolve(folder, 'plugin.json'), 'utf8'));
 const presentation = manifest.extensions['com.openai'].interface;
 assert.equal(manifest.name, 'botdoor');
-assert.equal(manifest.version, '1.6.0');
+assert.equal(manifest.version, '1.7.0');
 assert.ok(presentation.displayName.length <= 30);
 assert.ok(presentation.shortDescription.length <= 30);
 assert.ok(presentation.longDescription.length <= 4000);
@@ -50,7 +50,7 @@ console.log(`Bundled SDK smoke: ${JSON.stringify(await runMcpSmoke(bundled))}`);
 const privateFreeEnv = Object.fromEntries(Object.entries(process.env).filter(([key, value]) => typeof value === 'string' && !key.startsWith('BOTDESK_')));
 const transport = new StdioClientTransport({ command: process.execPath, args: [bundled], env: privateFreeEnv, stderr: 'pipe' });
 transport.stderr?.on('data', () => {});
-const client = new Client({ name: 'botdoor-package-check', version: '1.6.0' });
+const client = new Client({ name: 'botdoor-package-check', version: '1.7.0' });
 try {
   await client.connect(transport, { timeout: 10_000 });
   const result = await client.callTool({ name: 'botdesk_status', arguments: {} });

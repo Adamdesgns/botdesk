@@ -96,6 +96,45 @@ const botRoute = c => '/api/bot/' + c.hostId + '/command';
 const ownerRoute = c => '/api/owner/' + c.hostId;
 const command = (c, name, botId = 'bot-a', extras = {}) => api(botRoute(c), c.botToken, { name, args: {} }, { 'x-bot-id': botId, ...extras });
 
+test('phone takeover crosses the actual relay and host, excludes bot input and revokes stale frames on return',async t=>{
+ const c=await provision();const w={handle:'1001',processId:123,processName:'code',title:'Coding project',integrity:'medium',desktop:'default',automationChecked:true,passwordFocused:false,passwordPresent:false,geometry:{x:0,y:0,width:900,height:700}};
+ const config={...c,relayUrl:origin,allowRemoteArm:true,accessMode:'owner-control',blockedApps:[]};const actions=[];
+ const host=new HostController({configStore:{load:()=>config,save:p=>Object.assign(config,p)},auditLog:{write:()=>{}},executor:{foreground:async()=>w,run:async(name,args)=>{actions.push({name,args});return {ok:true,window:w};},recordStop:async()=>({ok:true})}});
+ const client=new RelayClient({getConfig:()=>config,onCommand:m=>host.runCommand(m),onOwnerState:m=>host.applyOwnerState(m),onOwnerTarget:m=>host.ownerTarget(m)});
+ host.attachRelay(client);t.after(()=>{host.emergencyStop();client.disconnect();});
+ const ready=new Promise(resolve=>client.on('status',s=>{if(s.authenticated)resolve();}));client.connect();await ready;
+ await until(async()=>(await api(ownerRoute(c)+'/status',c.ownerToken)).body.target?.accessMode==='owner-control');
+ assert.equal((await api(ownerRoute(c)+'/state',c.botToken,{mode:'armed',operator:'owner'})).status,401);
+ const takeover=await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'owner'});
+ assert.equal(takeover.status,200,JSON.stringify(takeover));assert.equal(takeover.body.operator,'owner');assert.equal(takeover.body.schedule,null);
+ assert.equal(host.operator,'owner');assert.equal((await command(c,'screenshot')).body.error,'owner-has-control');
+ const ownerCmd=(name,args={})=>api(ownerRoute(c)+'/command',c.ownerToken,{name,args});
+ const shot=(await ownerCmd('screenshot')).body.result;
+ assert.equal((await ownerCmd('type',{snapshotId:shot.snapshotId,text:'Start coding'})).status,200);assert.equal(actions.at(-1).name,'type');
+ assert.equal((await ownerCmd('key',{snapshotId:shot.snapshotId,key:'ENTER'})).body.error,'fresh-snapshot-required');
+ const fresh=(await ownerCmd('screenshot')).body.result;
+ const back=await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'bot'});assert.equal(back.status,200);assert.equal(host.operator,'bot');
+ assert.equal((await ownerCmd('click',{snapshotId:fresh.snapshotId,x:1,y:1})).body.error,'owner-command-blocked');
+ assert.equal((await api(botRoute(c),c.botToken,{name:'click',args:{snapshotId:fresh.snapshotId,x:1,y:1}},{'x-bot-id':'bot-a'})).body.error,'fresh-snapshot-required');
+ await api(ownerRoute(c)+'/state',c.ownerToken,{mode:'off'});
+ assert.equal((await ownerCmd('screenshot')).body.error,'not-armed');
+});
+
+test('owner takeover preempts an in-flight bot command and ignores its late result',async t=>{
+ const c=await provision(),socket=await connected(c,t);
+ socket.send(JSON.stringify({type:'target_status',target:{state:'pc-access',accessMode:'owner-control'}}));
+ await until(async()=>(await api(ownerRoute(c)+'/status',c.ownerToken)).body.target?.accessMode==='owner-control');
+ await arm(c,socket);
+ const botPending=command(c,'screenshot'),old=await socket.next('command');
+ const takeover=api(ownerRoute(c)+'/state',c.ownerToken,{mode:'armed',operator:'owner'});
+ const state=await socket.next('owner_state');assert.equal(state.operator,'owner');
+ assert.equal((await botPending).body.error,'arm-requested');
+ socket.send(JSON.stringify({type:'command_result',commandId:old.commandId,ok:true,result:{snapshotId:'old'}}));
+ socket.send(JSON.stringify({...state,type:'owner_state_result',ok:true}));
+ assert.equal((await takeover).body.operator,'owner');
+ assert.equal((await command(c,'click')).body.error,'owner-has-control');
+});
+
 test('only the owner can reveal the currently paired bot token through the live host',async t=>{
   const c=await provision();
   const config={...c,relayUrl:origin};
@@ -181,7 +220,7 @@ test('owner recovery crosses the real relay, stops access, approves a separate-P
   assert.equal((await api(ownerRoute(c)+'/target',c.ownerToken,{action:'approve',candidateId,temporary:true})).status,200);
   assert.equal(host.mode,'off');assert.equal(host.targetWindow.handle,'2002');
   const status=(await api(ownerRoute(c)+'/status',c.ownerToken)).body;
-  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.6.0');
+  assert.equal(status.target.window.processId,456);assert.equal(status.relayContractVersion,'1.7.0');
   assert.equal((await api(ownerRoute(c)+'/schedule',c.ownerToken,{startsAt:Date.now()+1000,endsAt:Date.now()+60000})).body.error,'temporary-target-no-schedule');
   const armed=await client.ownerState('armed');assert.equal(armed.expiresAt,host.targetDeadline);
   assert.equal((await command(c,'screenshot')).status,200);
