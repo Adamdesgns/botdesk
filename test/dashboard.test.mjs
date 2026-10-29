@@ -25,6 +25,11 @@ test('pending connection, pending activation, future schedule and live remain di
   const live=render({mode:'armed',hostOnline:true,liveEndsAt:Date.now()+60000});
   assert.equal(live.get('#mode').textContent,'LIVE');assert.match(live.get('#countdown').textContent,/^Live for /);
 });
+test('phone operator switch does not request a fresh eight-hour grant while a session is live',()=>{
+  const viewer=fs.readFileSync(new URL('../relay/src/owner-viewer.ts',import.meta.url),'utf8');
+  assert.match(viewer,/const live=\['armed','running'\]\.includes\(current\?\.mode\)&&Number\.isFinite\(ends\)&&ends>Date\.now\(\)/);
+  assert.match(viewer, /\.\.\.\(live\?\{\}:\{minutes:480\}\)/);
+});
 test('PC access shows blocklist, hides window picker, and permits GO LIVE without a selected window',()=>{
   const nodes=render({mode:'off',hostOnline:true,target:{state:'pc-access',accessMode:'pc-access',blockedApps:['discord','steam']}});
   assert.equal(nodes.get('#target-card').hidden,true);

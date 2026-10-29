@@ -46,7 +46,7 @@ async function ownerAct(name,args={},needsFrame=true){
 }
 async function changeOperator(operator){
  if(ownerBusy)return;ownerBusy=true;invalidateOwnerFrame();clearScreen();
- try{const handoffId=operator==='bot'&&current?.handoff?.state==='waiting'?current.handoff.id:undefined;render(await request('/api/owner/'+host+'/state',{mode:'armed',minutes:480,operator,...(handoffId?{handoffId}:{})}));ownerNotice(operator==='owner'?'You have control. Bot input is paused.':'Bot control enabled.');}
+ try{const handoffId=operator==='bot'&&current?.handoff?.state==='waiting'?current.handoff.id:undefined;const ends=current?.liveEndsAt||current?.expiresAt;const live=['armed','running'].includes(current?.mode)&&Number.isFinite(ends)&&ends>Date.now();render(await request('/api/owner/'+host+'/state',{mode:'armed',operator,...(live?{}:{minutes:480}),...(handoffId?{handoffId}:{})}));ownerNotice(operator==='owner'?'You have control. Bot input is paused.':'Bot control enabled.');}
  catch(e){ownerNotice(e.message);}finally{ownerBusy=false;await refresh();if(operator==='owner')await ownerCapture();}
 }
 vq('#take-control').onclick=()=>changeOperator('owner');

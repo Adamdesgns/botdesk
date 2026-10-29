@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canBotControl, effectiveState, clampMinutes } from '../relay/src/policy.ts';
+import { canBotControl, effectiveState, clampMinutes, grantDeadline } from '../relay/src/policy.ts';
 
 test('relay expires armed sessions and bot leases', () => {
   const state = { mode: 'armed', expiresAt: 100, hostLastSeen: null, activeBot: 't1', leaseEndsAt: 100 };
@@ -22,6 +22,16 @@ test('armed state without a valid deadline cannot grant a lease', () => {
   assert.equal(canBotControl({ mode: 'armed', expiresAt: null, hostLastSeen: null, activeBot: null, leaseEndsAt: null }, 'bot').allowed, false);
   const base = { mode: 'armed', expiresAt: 1000, hostLastSeen: null, activeBot: null, leaseEndsAt: null };
   assert.equal(canBotControl(base, 'bot', 999).next.leaseEndsAt, 1000);
+});
+
+test('an operator switch cannot move an existing deadline later, including past the five-minute floor', () => {
+  const now = 1_000_000;
+  const remaining = now + 2 * 60_000;
+  assert.equal(grantDeadline(now, 480, Infinity, remaining), remaining);
+  assert.equal(grantDeadline(now, 1, Infinity, remaining), remaining);
+  assert.equal(grantDeadline(now, 480, remaining - 30_000, remaining), remaining - 30_000);
+  assert.equal(grantDeadline(now, 30, Infinity, null), now + 30 * 60_000);
+  assert.equal(grantDeadline(now, 480, Infinity, now - 1), now + 480 * 60_000);
 });
 
 test('relay gives one bot a renewable lease', () => {

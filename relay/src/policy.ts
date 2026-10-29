@@ -22,6 +22,14 @@ export function clampMinutes(value: unknown): number {
   return Math.min(720, Math.max(5, parsed));
 }
 
+/** Deadline for a new or continued grant. An existing live deadline is a ceiling: operator switches can shorten it and cannot move it later. */
+export function grantDeadline(now: number, minutes: unknown, targetLimit: number = Infinity, previousDeadline: number | null = null): number {
+  const limit = Number.isFinite(targetLimit) ? targetLimit : Infinity;
+  const requested = Math.min(now + clampMinutes(minutes) * 60_000, limit);
+  if (previousDeadline !== null && Number.isFinite(previousDeadline) && previousDeadline > now) return Math.min(requested, previousDeadline);
+  return requested;
+}
+
 export function effectiveState(state: RelayState, now = Date.now()): RelayState {
   if ((['armed', 'running'].includes(state.mode) && !Number.isFinite(state.expiresAt)) || (state.expiresAt !== null && now >= state.expiresAt)) {
     return { ...state, mode: 'off', expiresAt: null, activeBot: null, leaseEndsAt: null };

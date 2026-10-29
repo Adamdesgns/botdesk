@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { dashboardHtml } from './dashboard';
-import { canBotControl, clampMinutes, DEFAULT_STATE, effectiveState, normalizeMode, type RelayState } from './policy';
+import { canBotControl, clampMinutes, DEFAULT_STATE, effectiveState, grantDeadline, normalizeMode, type RelayState } from './policy';
 
 type Secrets = { hostHash: string; ownerHash: string; botHash: string };
 type RecordValue = Record<string, unknown>;
@@ -148,20 +148,25 @@ export class BotDeskSession extends DurableObject<Env> {
     }
     if (body.handoffId !== undefined) return json({error:'handoff-no-longer-active'},409);
     if (mode === 'armed' && this.pending && !(body.operator === 'owner' && this.pending.kind === 'command')) return json({ error: 'host-busy' }, 409);
+    this.refreshState();
+    // Take control and return-to-bot keep the live deadline. A longer minutes value must not extend it.
+    const preservedDeadline = mode === 'armed' && (body.operator === 'owner' || body.operator === 'bot')
+      && (this.state.mode === 'armed' || this.state.mode === 'running')
+      && typeof this.state.expiresAt === 'number' && this.state.expiresAt > Date.now()
+      ? this.state.expiresAt : null;
     this.forceOff(mode === 'armed' ? 'arm-requested' : `owner-${mode}`);
     this.operator = mode === 'armed' && body.operator === 'owner' ? 'owner' : 'bot';
     const generation = this.generation;
     this.ownerTransition = generation;
     if (mode !== 'armed') this.sendSafetyOff(`owner-${mode}`);
     const targetLimit = typeof this.target?.temporaryUntil === 'number' ? this.target.temporaryUntil : Infinity;
-    const expiresAt = mode === 'armed' ? Math.min(Date.now() + clampMinutes(body.minutes) * 60_000, targetLimit) : null;
+    const expiresAt = mode === 'armed' ? grantDeadline(Date.now(), body.minutes, targetLimit, preservedDeadline) : null;
     const saved = expiresAt && this.operator === 'bot' ? { id: crypto.randomUUID(), startsAt: Date.now(), endsAt: expiresAt } : null;
     try {
       await this.replaceSchedule(saved);
       if (this.generation !== generation) return json({ error: 'state-superseded' }, 409);
       if (!this.host) return json({ ...this.status(), confirmed: false, saved: Boolean(saved) }, saved ? 202 : 200);
       const responsePromise = this.sendAndWait('state', { type: 'owner_state', requestId, mode, operator:this.operator, minutes: clampMinutes(body.minutes), expiresAt, controlGeneration: this.generation }, requestId, mode, expiresAt);
-      this.ownerTransition = null;
       const response = await responsePromise;
       if (saved) await this.completeScheduleAttempt(saved, response.clone());
       return response;
@@ -219,7 +224,7 @@ export class BotDeskSession extends DurableObject<Env> {
     this.forceOff('scheduled-arm');
     const requestId = crypto.randomUUID();
     const response = await this.sendAndWait('state', {
-      type: 'owner_state', requestId, mode: 'armed', expiresAt: saved.endsAt,
+      type: 'owner_state', requestId, mode: 'armed', operator: 'bot', expiresAt: saved.endsAt,
       minutes: Math.max(1, Math.ceil((saved.endsAt - now) / 60_000)), controlGeneration: this.generation
     }, requestId, 'armed', saved.endsAt);
     await this.completeScheduleAttempt(saved, response);
@@ -230,7 +235,7 @@ export class BotDeskSession extends DurableObject<Env> {
     const result = await response.json<{ error?: string }>();
     if (this.schedule?.id !== saved.id) return;
     this.scheduleError = result.error || 'scheduled-arm-rejected';
-    if (['local-stop-latched', 'remote-arm-disabled', 'local-stop', 'select-a-window-first', 'target-reselect-required', 'temporary-target-expired', 'temporary-target-limit', 'focus-refused', 'target-changed'].includes(this.scheduleError)) {
+    if (['local-stop-latched', 'remote-arm-disabled', 'local-stop', 'select-a-window-first', 'target-reselect-required', 'temporary-target-expired', 'temporary-target-limit', 'focus-refused', 'target-changed', 'operator-mismatch'].includes(this.scheduleError)) {
       const error = this.scheduleError; await this.replaceSchedule(null); this.scheduleError = error; return;
     }
     await this.ctx.storage.setAlarm(Math.min(Date.now() + 30_000, saved.endsAt));
@@ -375,7 +380,7 @@ export class BotDeskSession extends DurableObject<Env> {
     this.settle(json({ error: reason }, 409));
   }
   private sendSafetyOff(reason: string): void {
-    try { this.host?.send(JSON.stringify({ type: 'owner_state', requestId: crypto.randomUUID(), mode: 'off', expiresAt: null, controlGeneration: this.generation, reason })); }
+    try { this.host?.send(JSON.stringify({ type: 'owner_state', requestId: crypto.randomUUID(), mode: 'off', operator: 'bot', expiresAt: null, controlGeneration: this.generation, reason })); }
     catch { if (this.host) this.disconnectHost(this.host, 'host-send-failed'); }
   }
   private heartbeat(): void {
@@ -419,8 +424,10 @@ export class BotDeskSession extends DurableObject<Env> {
     const pending = this.pending;
     if (!pending || pending.generation !== this.generation) return;
     if (message.type === 'owner_state_result' && pending.kind === 'state' && message.requestId === pending.id) {
-      if (message.ok !== true || message.mode !== pending.mode || message.expiresAt !== pending.expiresAt || message.controlGeneration !== pending.generation || (this.ownerTransition === pending.generation && message.operator !== this.operator)) {
-        this.settle(json({ error: typeof message.error === 'string' ? message.error.slice(0, 160) : 'owner-state-rejected', ...this.status() }, 409));
+      const operatorMismatch = message.ok === true && message.operator !== this.operator;
+      if (message.ok !== true || message.mode !== pending.mode || message.expiresAt !== pending.expiresAt || message.controlGeneration !== pending.generation || operatorMismatch) {
+        const error = operatorMismatch ? 'operator-mismatch' : (typeof message.error === 'string' ? message.error.slice(0, 160) : 'owner-state-rejected');
+        this.settle(json({ error, ...this.status() }, 409));
         this.forceOff('owner-state-rejected'); this.sendSafetyOff('owner-state-rejected'); return;
       }
       if (pending.mode === 'armed' && (pending.expiresAt || 0) <= Date.now()) {

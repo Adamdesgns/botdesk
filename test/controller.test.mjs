@@ -40,6 +40,9 @@ test('Owner control types in coding apps, preserves snapshots and denies bot dur
  await s.controller.applyOwnerState({mode:'armed',operator:'owner',expiresAt:100000,controlGeneration:1});
  assert.equal(s.controller.getStatus().operator,'owner');
  assert.equal((await s.controller.runCommand(s.command('screenshot'))).error,'owner-has-control');
+ for (const name of ['click','type','key','drag','scroll','move','clipboard_write']) {
+  assert.equal((await s.controller.runCommand(s.command(name,{snapshotId:'x',x:1,y:1,text:'hi',key:'ENTER',deltaY:-120,points:[{x:1,y:1},{x:2,y:2}],durationMs:200}))).error,'owner-has-control');
+ }
  const snapshotId=await s.capture('owner-preview');
  assert.equal((await s.controller.runCommand(s.command('type',{snapshotId,text:'start a coding session'},{botId:'owner-preview'}))).ok,true);
  assert.equal(s.calls.at(-1).args.accessMode,'owner-control');

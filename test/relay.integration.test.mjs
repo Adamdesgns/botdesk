@@ -573,6 +573,75 @@ test('offline saved schedule can start on connect; phone PAUSE cancels it and pr
   assert.equal((await command(c, 'snapshot')).body.error, 'not-armed');
 });
 
+test('operator switch keeps the live deadline and a mismatched host operator cannot arm', async t => {
+  const c = await provision(); const socket = await connected(c, t);
+  socket.send(JSON.stringify({ type: 'target_status', target: { state: 'pc-access', accessMode: 'owner-control' } }));
+  await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.target?.accessMode === 'owner-control');
+  const armed = await arm(c, socket);
+  const deadline = armed.body.expiresAt;
+  assert.ok(deadline > Date.now() + 20 * 60_000 && deadline < Date.now() + 31 * 60_000);
+  const takeover = api(ownerRoute(c) + '/state', c.ownerToken, { mode: 'armed', operator: 'owner', minutes: 480 });
+  const ownerMessage = await nextMode(socket, 'armed');
+  assert.equal(ownerMessage.operator, 'owner');
+  assert.equal(ownerMessage.expiresAt, deadline);
+  socket.send(JSON.stringify({ ...ownerMessage, type: 'owner_state_result', ok: true }));
+  const owner = await takeover;
+  assert.equal(owner.status, 200, JSON.stringify(owner.body));
+  assert.equal(owner.body.expiresAt, deadline);
+  assert.equal(owner.body.operator, 'owner');
+  assert.equal(owner.body.schedule, null);
+  for (const name of ['click', 'type', 'scroll', 'move', 'drag', 'key']) {
+    assert.equal((await command(c, name)).body.error, 'owner-has-control', name);
+  }
+  const returned = api(ownerRoute(c) + '/state', c.ownerToken, { mode: 'armed', operator: 'bot', minutes: 720 });
+  const botMessage = await nextMode(socket, 'armed');
+  assert.equal(botMessage.operator, 'bot');
+  assert.equal(botMessage.expiresAt, deadline);
+  socket.send(JSON.stringify({ ...botMessage, type: 'owner_state_result', ok: true }));
+  const back = await returned;
+  assert.equal(back.status, 200, JSON.stringify(back.body));
+  assert.equal(back.body.expiresAt, deadline);
+  assert.equal(back.body.operator, 'bot');
+  const extended = api(ownerRoute(c) + '/state', c.ownerToken, { mode: 'armed', minutes: 480 });
+  const goLive = await nextMode(socket, 'armed');
+  assert.ok(goLive.expiresAt > deadline);
+  socket.send(JSON.stringify({ ...goLive, type: 'owner_state_result', ok: true }));
+  assert.equal((await extended).status, 200);
+  const stopped = await command(c, 'stop_all');
+  assert.equal(stopped.body.result.mode, 'off');
+  assert.equal(stopped.body.result.schedule, null);
+  assert.equal(stopped.body.result.handoff, null);
+  assert.equal(stopped.body.result.operator, 'bot');
+  const safety = await nextMode(socket, 'off');
+  assert.equal(safety.operator, 'bot');
+  assert.equal(safety.mode, 'off');
+  assert.equal((await command(c, 'click')).body.error, 'owner-input-required');
+  assert.equal((await command(c, 'scroll')).body.error, 'not-armed');
+});
+
+test('host acknowledgement must confirm the requested operator or the grant stays off', async t => {
+  const c = await provision(); const socket = await connected(c, t);
+  socket.send(JSON.stringify({ type: 'target_status', target: { state: 'pc-access', accessMode: 'owner-control' } }));
+  await until(async () => (await api(ownerRoute(c) + '/status', c.ownerToken)).body.target?.accessMode === 'owner-control');
+  await arm(c, socket);
+  const pending = api(ownerRoute(c) + '/state', c.ownerToken, { mode: 'armed', operator: 'owner' });
+  const message = await nextMode(socket, 'armed');
+  assert.equal(message.operator, 'owner');
+  socket.send(JSON.stringify({ ...message, type: 'owner_state_result', ok: true, operator: 'bot' }));
+  const rejected = await pending;
+  assert.equal(rejected.status, 409);
+  assert.equal(rejected.body.error, 'operator-mismatch');
+  const safety = await nextMode(socket, 'off');
+  assert.equal(safety.operator, 'bot');
+  const status = (await api(ownerRoute(c) + '/status', c.ownerToken)).body;
+  assert.equal(status.mode, 'off');
+  assert.equal(status.operator, 'bot');
+  assert.equal(status.schedule, null);
+  assert.equal((await command(c, 'click')).body.error, 'owner-input-required');
+  assert.equal((await command(c, 'type')).body.error, 'owner-input-required');
+  assert.equal((await command(c, 'scroll')).body.error, 'not-armed');
+});
+
 test('local emergency and local-stop rejection cancel saved schedules instead of retrying', async t => {
   const c = await provision(); const socket = await connected(c, t);
   await api(ownerRoute(c) + '/schedule', c.ownerToken, { startsAt: Date.now() + 10_000, endsAt: Date.now() + 20_000 });
