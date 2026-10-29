@@ -224,7 +224,7 @@ export class HostController extends EventEmitter {
         }
         const restored=await this.executor.foreground({signal:operation.signal});
         if(epoch!==this.epoch||operation.signal.aborted)return fail('command-cancelled');
-        if(String(focusTarget.handle)!==String(restored.handle)||focusTarget.processId!==restored.processId){
+        if(!sameTarget(focusTarget,restored)){
           this.auditLog.write({botId,command:name,outcome:'target-changed',app:focusTarget.processName});
           return fail('target-changed','The approved window could not be restored to the foreground.');
         }

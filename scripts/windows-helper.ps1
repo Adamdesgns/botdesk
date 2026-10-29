@@ -205,7 +205,11 @@ public static class BotDeskNative {
     if(GetForegroundWindow()!=hwnd && !SetForegroundWindow(hwnd)) {
       Check(handle,pid,false);
       try { AutomationElement.FromHandle(hwnd).SetFocus(); }
-      catch { throw Block("focus-refused"); }
+      catch {
+        // A provider can throw while activation is completing. Its exception is
+        // not the foreground result: observe the exact HWND below, then recheck
+        // identity and sensitive controls. Never expose provider error details.
+      }
     }
     var wait=Stopwatch.StartNew();
     while(GetForegroundWindow()!=hwnd && wait.ElapsedMilliseconds<1000) {

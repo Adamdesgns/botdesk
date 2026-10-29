@@ -424,6 +424,60 @@ test('successful native focus still fails closed if the restored window is sensi
   assert.equal(s.calls.at(-1).args.expectedWindow.handle, '1001');
 });
 
+test('explicit focus rejects replaced or missing process identity after native success', async (t) => {
+  for (const accessMode of ['selected-window', 'owner-control']) {
+    for (const update of [{ processStartedAt: 'replacement' }, { processStartedAt: undefined }, { processName: 'chrome' }, { handle: '1002' }, { processId: 456 }]) {
+      const s = setup(t, { accessMode, allowedApps: ['msedge', 'chrome'], blockedApps: [] }); s.arm();
+      s.executor.focus = async () => { s.changeWindow(update); return { ok: true }; };
+      const result = await s.controller.runCommand(s.command('focus', accessMode === 'selected-window' ? {} : { windowHandle: '1001' }));
+      assert.equal(result.error, 'target-changed', JSON.stringify({ accessMode, update, result }));
+      assert.equal(result.result?.focused, undefined);
+      assert.equal(s.controller.snapshots.size, 0);
+      assert.equal(s.calls.length, 0, 'no screenshot or input follows failed focus');
+    }
+  }
+});
+
+test('explicit focus rejects late success after STOP, expiry or scope revocation', async (t) => {
+  for (const stage of ['focus', 'foreground']) {
+    for (const revoke of ['stop', 'expiry', 'scope']) {
+      const s = setup(t); s.arm();
+      const started = deferred(), pending = deferred(); let signal, foregroundCalls = 0;
+      s.executor.focus = async (_window, options) => {
+        signal = options.signal;
+        if (stage === 'focus') { started.resolve(); return pending.promise; }
+        return { ok: true };
+      };
+      s.executor.foreground = async (options) => {
+        foregroundCalls++;
+        if (stage === 'foreground' && foregroundCalls === 2) { signal = options.signal; started.resolve(); return pending.promise; }
+        return target();
+      };
+      const request = s.controller.runCommand(s.command('focus'));
+      await started.promise;
+      if (revoke === 'stop') s.controller.emergencyStop();
+      else if (revoke === 'expiry') { s.advance(300_001); s.controller.getStatus(); }
+      else s.controller.setAccessPolicy({ accessMode: 'pc-access', blockedApps: [] });
+      assert.equal(signal.aborted, true, `${stage}/${revoke}`);
+      pending.resolve(stage === 'focus' ? { ok: true } : target());
+      assert.equal((await request).error, 'command-cancelled', `${stage}/${revoke}`);
+      assert.equal(s.controller.snapshots.size, 0);
+      assert.equal(s.controller.mode, 'off');
+      assert.equal(s.calls.length, 0);
+      if (stage === 'focus') assert.equal(foregroundCalls, 1, 'no post-focus inspection after cancellation');
+    }
+  }
+});
+
+test('explicit focus cannot take another bot lease or run a stale generation', async (t) => {
+  const s = setup(t); s.arm();
+  s.controller.activeBot = 'other-bot'; s.controller.leaseEndsAt = 61_000;
+  assert.equal((await s.controller.runCommand(s.command('focus'))).error, 'bot-lease-held');
+  s.controller.activeBot = null;
+  assert.equal((await s.controller.runCommand(s.command('focus', {}, { controlGeneration: 0 }))).error, 'stale-session');
+  assert.equal(s.calls.length, 0);
+});
+
 test('list_monitors works while another allowed window is foreground', async (t) => {
   const s = setup(t); s.arm();
   s.changeWindow({ handle: '2002', processId: 999, processName: 'chrome', title: 'Other ordinary page' });
